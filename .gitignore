@@ -3,7 +3,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-.vscode/tasks.json
 
 # Hardware privado (solo en notebook, no se sube a Gitea)
 hardware/

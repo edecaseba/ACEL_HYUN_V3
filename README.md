@@ -11,10 +11,11 @@ Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puen
 | MCU | Arduino Nano (ATmega328P) @ 16 MHz |
 | Framework | Arduino 2.3.0 |
 | Alimentación | 24 Vcc |
+| Fuente | Módulo Step-Down XL4005 (24V → 5V) |
 | Flash | 32 KB |
 | SRAM | 2 KB |
 | Política de memoria | Zero Dynamic RAM (solo estática post-init) |
-| Driver de potencia | IBT-2 BTS7960 (Puente H) |
+| Driver de potencia | Módulo IBT-2 BTS7960 (Puente H, 43A) |
 | PWM | 20 kHz con dead-time configurable |
 | Estándar de código | MISRA C:2012 / MISRA C++:2008 |
 
@@ -25,7 +26,7 @@ Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puen
 | A0 | PotOp | Potenciómetro de operación (pedal) |
 | A1 | PotFeed | Potenciómetro de retroalimentación (acelerador) |
 | A2 | IS_SENSE | Sensor de corriente (detección de stall) |
-| D8 | EN | Enable del BTS7960 |
+| D8 | EN | Enable del IBT-2 (R_EN + L_EN) |
 | D9 | L_PWM | PWM de retroceso |
 | D10 | R_PWM | PWM de avance |
 
@@ -33,25 +34,26 @@ Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puen
 
 ```
 ┌──────────┐    ┌──────────────┐    ┌───────────┐    ┌──────────┐
-│ Pedal    │───►│ Filtro EMA   │───►│ PID      │───►│ BTS7960  │──► Motor
+│ Pedal    │───►│ Filtro EMA   │───►│ PID      │───►│ IBT-2   │──► Motor
 │ (ADC)    │    │ Anti-aliasing│    │ Controller│    │ (PWM)    │
 └──────────┘    └──────────────┘    └───────────┘    └──────────┘
                       ▲                                  │
                       │                                  ▼
                       │                           ┌──────────┐
                       └───────────────────────────┤ Feedback │
-                                                  │ (ADC)    │
-                                                  └──────────┘
+                                                   │ (ADC)    │
+                                                   └──────────┘
 ```
 
 - **Filtro EMA**: Suavizado de lecturas analógicas para cumplir ISO 7637-2 (transitorios automotrices)
 - **PID**: Control discreto con anti-windup, límite de slew rate y reset por fricción
-- **BTS7960**: Dead-time obligatorio de 150 ms entre cambios de dirección (anti shoot-through)
+- **IBT-2 (BTS7960)**: Dead-time obligatorio de 150 ms entre cambios de dirección (anti shoot-through)
 - **Safe State**: Ante pérdida de señal o sobrecorriente, EN → LOW, motor detenido
 
 ## Estructura del Proyecto
 
 ```
+ACEL_HYUN_V3/
 ├── src/
 │   ├── main.cpp              # Lógica principal con PID integral
 │   └── pid_controller.h      # Controlador PID discreto
@@ -60,8 +62,17 @@ Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puen
 │   └── TEST_PROCEDURE.md     # Procedimiento de prueba en hardware
 ├── include/                  # Librerías adicionales
 ├── lib/                      # Dependencias
-└── platformio.ini            # Build configuration
+├── hardware/                 # <privado> Documentación + diseño PCB
+│   ├── BOM.csv               # Lista de materiales THT
+│   ├── PCB_DESIGN_GUIDE.md   # Guía de diseño + esquemático + layout
+│   └── KiCAD_SETUP.md        # Configuración KiCad / footprints / netlist
+├── platformio.ini            # Build configuration
+├── gitea-init.sh             # Script de inicialización Gitea
+└── README.md                 # Este archivo
 ```
+
+> 🔒 **hardware/** es privado y está excluido del repositorio público vía `.gitignore`.
+> Solo existe localmente en la notebook de desarrollo. No se sube a Gitea.
 
 ## Seguridad Funcional
 

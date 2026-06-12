@@ -1,0 +1,145 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "🚀 Sincronizar con Gitea (status + add + commit + push)",
+            "type": "shell",
+            "command": "echo '=== Git Status ===' && git status --short && echo '' && echo '=== Pusheando a Gitea ===' && git add -A && git diff --cached --quiet && echo 'Sin cambios.' || (echo 'Ingrese mensaje de commit:' && read MSG && git commit -m \"${MSG:-sync: $(date +%Y-%m-%d_%H:%M)}\" && git push && echo 'DONE')",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "🔍 Status rápido (git status)",
+            "type": "shell",
+            "command": "git status --short",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "📜 Ver diff sin commitear",
+            "type": "shell",
+            "command": "git diff",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "⏪ Deshacer último commit (local, no push)",
+            "type": "shell",
+            "command": "git reset --soft HEAD~1",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "🔨 Compilar firmware (PlatformIO)",
+            "type": "shell",
+            "command": "pio run",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                {
+                    "owner": "cpp",
+                    "fileLocation": ["relative", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                }
+            ]
+        },
+        {
+            "label": "🧪 Correr tests unitarios (PlatformIO)",
+            "type": "shell",
+            "command": "pio test",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "📦 Sincronización completa (status → pull → add → commit → push)",
+            "type": "shell",
+            "command": "echo '=== 1/6 Git Status ===' && git status --short && echo '' && echo '=== 2/6 Pull remoto ===' && git pull --ff-only && echo '' && echo '=== 3/6 Agregando todo ===' && git add -A && echo '' && echo '=== 4/6 Estado para commit ===' && git status --short && echo '' && echo '=== 5/6 Commit ===' && git diff --cached --quiet && echo 'Sin cambios. Nada que pushear.' || (echo 'Ingrese mensaje de commit:' && read MSG && git commit -m \"${MSG:-sync: $(date +%Y-%m-%d_%H:%M)}\") && echo '' && echo '=== 6/6 Push a Gitea ===' && git push && echo '' && echo '✅ Sincronización completa.'",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
