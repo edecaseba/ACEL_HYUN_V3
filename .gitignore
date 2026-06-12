@@ -3,3 +3,15 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+.vscode/tasks.json
+
+# AI / Agentes (no forman parte del firmware)
+.opencode/
+opencode.json
+AGENTS.md
+ai/
+CHANGELOG.md
+change.md
+GEMINI.md
+RESUMEN_CORRECCION_ORQUESTACION.md
+session-*.md
