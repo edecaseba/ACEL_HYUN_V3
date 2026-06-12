@@ -15,3 +15,9 @@ change.md
 GEMINI.md
 RESUMEN_CORRECCION_ORQUESTACION.md
 session-*.md
+
+# KiCad / EDA (solo generados, NO los archivos de diseño)
+hardware/gerber/
+hardware/*-cache.lib
+hardware/_autosave-*
+hardware/netlist/*.net.tmp

@@ -78,6 +78,18 @@ Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puen
 - **Lenguaje**: C++17 / C++20
 - **Tests**: Unity Test Framework + ArduinoFake
 
+## Regla de Oro
+
+> **Electronic Engineering Partner — Especializado en Maquinaria Pesada.**
+>
+> Este repositorio no solo contiene firmware: también incluye especificaciones
+> de hardware, esquemáticos de filtrado, layout de PCB y estrategias EMC/EMI
+> para garantizar funcionamiento en entornos industriales de alta interferencia
+> electromagnética (24Vcc, hidráulica, motores de alto torque, transitorios
+> automotrices ISO 7637-2). Todo cambio de hardware debe documentarse en los
+> archivos de la carpeta `hardware/` y validarse contra las normativas
+> ISO 13849, ISO 7637-2 e ISO 13766.
+
 ## Licencia
 
 Uso interno — maquinaria industrial pesada.
