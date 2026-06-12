@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hardware_target>
+    <mcu>
+        <name>Arduino Nano</name>
+        <chip>ATmega328P</chip>
+        <frequency>16 MHz</frequency>
+        <flash>32 KB</flash>
+        <ram>2 KB</ram>
+        <voltage>24Vcc</voltage>
+    </mcu>
+    <framework>
+        <name>Arduino</name>
+        <version>2.3.0</version>
+    </framework>
+    <pins>
+        <pin>
+            <name>RPWM</name>
+            <function>Control de avance del acelerador</function>
+            <voltage>24Vcc</voltage>
+        </pin>
+        <pin>
+            <name>LPWM</name>
+            <function>Control de retroceso del acelerador</function>
+            <voltage>24Vcc</voltage>
+        </pin>
+        <pin>
+            <name>POS</name>
+            <function>Entrada de posición del acelerador</function>
+            <voltage>24Vcc</voltage>
+        </pin>
+    </pins>
+    <memory>
+        <static>2 KB</static>
+        <dynamic>0 KB (Zero Dynamic RAM)</dynamic>
+    </memory>
+    <code_rules>
+        <standard>MISRA C:2012 / MISRA C++:2008</standard>
+        <zero_dynamic_ram>true</zero_dynamic_ram>
+        <dead_time>obligatorio</dead_time>
+        <pwm_frequency>20 kHz</pwm_frequency>
+    </code_rules>
+</hardware_target>

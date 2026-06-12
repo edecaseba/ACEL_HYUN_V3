@@ -3,6 +3,8 @@
 #include <avr/wdt.h>
 #include <stdint.h>
 
+#include "pid_controller.h"
+
 // ==========================================
 // --- Hardware Invariants: Topología BTS7960 ---
 // ==========================================
@@ -59,13 +61,11 @@ static char cmdBuffer[16];
 static uint8_t cmdIndex = 0;
 
 // ==========================================
-// --- Parametros de Control ---
+// --- Estado del PID (persistente entre llamadas) ---
 // ==========================================
-constexpr float KP = 4.0f;
-constexpr float KD = 1.5f;
-constexpr uint8_t ZONA_MUERTA = 3;
-constexpr uint8_t PWM_MIN_OPERACION = 90;
 static int16_t errorAnterior = 0;
+static float integralAccumulator = 0.0f;
+static uint32_t lastPidTime = 0;
 
 // ==========================================
 // --- Maquina de Estados ---
@@ -177,6 +177,8 @@ void monitorStallCurrent() {
         detener();
         digitalWrite(PIN_EN, LOW);
         sysState.isFaulted = true;
+        integralAccumulator = 0.0f;
+        errorAnterior = 0;
         Serial.println(F("CRITICAL: STALL DETECTADO. Puente H bloqueado."));
     }
 }
@@ -187,6 +189,9 @@ void monitorStallCurrent() {
 
 static void iniciarCalibracion() {
     sysState.isFaulted = false;
+    integralAccumulator = 0.0f;
+    errorAnterior = 0;
+    lastPidTime = micros();
     digitalWrite(PIN_EN, HIGH);
     detener();
     calState = CalState::WAIT_PEDAL_MIN;
@@ -309,8 +314,10 @@ void procesarSerial() {
                     iniciarCalibracion();
                 } else if (strstr(cmdBuffer, "RST") != nullptr) {
                     sysState.isFaulted = false;
+                    integralAccumulator = 0.0f;
+                    errorAnterior = 0;
                     digitalWrite(PIN_EN, HIGH);
-                    Serial.println(F("Fallo de Stall reseteado."));
+                    Serial.println(F("Fallo reseteado. Integral y PID reiniciados."));
                 }
                 cmdIndex = 0;
             }
@@ -339,6 +346,8 @@ void setup() {
     filterFeedback.init(static_cast<float>(analogRead(pinPotFeed)));
     filterCurrent.init(static_cast<float>(analogRead(PIN_IS_SENSE)));
 
+    lastPidTime = micros();
+
     if (cfg.cv != MAGIC_NUMBER) {
         iniciarCalibracion();
     } else {
@@ -357,7 +366,23 @@ void loop() {
     tickCalibration();
     monitorStallCurrent();
 
+    // --- Proteccion de dead-time: resetear integral mientras dura ---
+    // Se coloca FUERA del bloque PID para que se ejecute siempre que
+    // deadTimeActive este activo, independientemente del estado de fault.
+    if (deadTimeActive) {
+        integralAccumulator = 0.0f;
+        errorAnterior = 0;
+    }
+
     if (calState == CalState::IDLE && cfg.cv == MAGIC_NUMBER && !sysState.isFaulted) {
+        // --- Calcular Ts real del lazo de control ---
+        uint32_t nowUs = micros();
+        float Ts = static_cast<float>(static_cast<int32_t>(nowUs - lastPidTime)) / 1000000.0f;
+        if (Ts <= 0.0f || Ts > 0.1f) {
+            Ts = 0.01f;
+        }
+        lastPidTime = nowUs;
+
         int16_t rOp = static_cast<int16_t>(filterPedal.filteredValue);
         int16_t rFe = static_cast<int16_t>(filterFeedback.filteredValue);
 
@@ -368,40 +393,53 @@ void loop() {
         posicion = constrain(posicion, 0, 100);
 
         int16_t errorActual = static_cast<int16_t>(setpoint - posicion);
+        bool direccionHaciaMax = (errorActual > 0);
 
-        if (abs(static_cast<int>(errorActual)) > static_cast<int16_t>(ZONA_MUERTA)) {
-            bool direccionHaciaMax = (errorActual > 0);
+        // --- Limites mecanicos: detener y resetear integral ---
+        bool enLimiteMecanico = false;
 
+        if (!inDeadZone(errorActual)) {
             if (direccionHaciaMax && (rFe >= cfg.mMax)) {
                 detener();
+                integralAccumulator = 0.0f;
+                errorAnterior = 0;
+                enLimiteMecanico = true;
             } else if (!direccionHaciaMax && (rFe <= cfg.mMin)) {
                 detener();
-            } else {
-                int16_t derivada = static_cast<int16_t>(errorActual - errorAnterior);
-                int16_t salidaPD = static_cast<int16_t>(
-                    (static_cast<float>(errorActual) * KP) +
-                    (static_cast<float>(derivada) * KD)
-                );
-                uint8_t vel = static_cast<uint8_t>(
-                    constrain(
-                        abs(salidaPD),
-                        static_cast<int16_t>(PWM_MIN_OPERACION),
-                        static_cast<int16_t>(255)
-                    )
-                );
-                mover(vel, direccionHaciaMax);
+                integralAccumulator = 0.0f;
+                errorAnterior = 0;
+                enLimiteMecanico = true;
             }
-        } else {
-            detener();
         }
 
-        errorAnterior = errorActual;
+        if (!enLimiteMecanico) {
+            // --- Llamar al algoritmo PID extraido ---
+            PidInput pidIn;
+            pidIn.errorActual = errorActual;
+            pidIn.errorAnterior = errorAnterior;
+            pidIn.integralAccumulator = integralAccumulator;
+            pidIn.Ts = Ts;
 
+            PidOutput pidOut;
+            pidCompute(pidIn, pidOut);
+
+            integralAccumulator = pidOut.integralAccumulator;
+            errorAnterior = pidOut.errorAnterior;
+
+            if (pidOut.deberiaDetener) {
+                detener();
+            } else {
+                mover(pidOut.vel, direccionHaciaMax);
+            }
+        }
+
+        // --- Reporte serial cada 100ms ---
         static uint32_t t = 0;
         if (millis() - t > 100) {
             Serial.print(F("SetP:")); Serial.print(setpoint);
             Serial.print(F("% ActP:")); Serial.print(posicion);
-            Serial.print(F("% Err:")); Serial.println(errorActual);
+            Serial.print(F("% Err:")); Serial.print(errorActual);
+            Serial.print(F(" Int:")); Serial.println(static_cast<int16_t>(integralAccumulator));
             t = millis();
         }
     }
