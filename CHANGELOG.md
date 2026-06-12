@@ -13,6 +13,7 @@
 | Archivo | Estado | Descripción |
 |---------|--------|-------------|
 | `src/main.cpp` | ✅ Implementado | Lógica principal completa con PID integral |
+| `README.md` | ✅ Creado | Documentación del proyecto + Regla de Oro Gitea |
 | `ai/hardware_target.json` | ✅ Creado | Config parametrizable de MCU (Nano / ESP32-S3) |
 | `ai/arquitectura_codigo.md` | ✅ Creado | Estándar MISRA, Zero RAM, PlatformIO |
 | `ai/hardware_ibt2.md` | ✅ Creado | Especificaciones IBT-2 BTS7960 |
@@ -26,10 +27,24 @@
 | `.opencode/agents/reviewer.md` | ✅ Actualizado | Sincronizado con pool universal |
 | `.opencode/agents/tester.md` | ✅ Actualizado | Acepta revisores alternativos del pool |
 | `.opencode/agents/documenter.md` | ✅ Actualizado | Registra uso del pool universal |
+| `.vscode/tasks.json` | ✅ Creado | 5 tareas VS Code para sincronización Gitea |
 | `test/test_pid.cpp` | ✅ Implementado | Tests unitarios PID con Unity (16 tests) |
 
 ### Funcionalidades implementadas (código)
 - (sin cambios, las mismas de v1.1.0)
+
+### Funcionalidades implementadas (orquestación)
+- Pool Universal de Fallback: 7 agentes intercambiables por cuota
+- Cadena model-aware: alterna entre North Mini → DeepSeek → Mimo → Gemini Flash → Gemini Pro
+- Script `gitea-init.sh` en PATH para automatizar push a Gitea
+- 5 tareas VS Code en `.vscode/tasks.json` para sincronización
+
+### Tests
+- `test/test_pid.cpp`: 16/16 tests PASSED (Unity + ArduinoFake)
+
+### Gitea
+- Repositorio creado en `http://100.74.184.3:3000/seba_admin/ACEL_HYUN_V3`
+- Push inicial completado — rama `main`
 
 ### Pendiente
 - ⬜ `test/TEST_PROCEDURE.md` — procedimiento de prueba en hardware
@@ -109,4 +124,5 @@
 
 ### Notes
 - Sesión: @coder (DeepSeek V4 Flash Free) usado como fallback de @documenter/@tester por cuota
+- @explore (Gemini 3.5 Flash) usado como fallback de documentación
 - El pool universal fue optimizado: la cadena ahora alterna entre 4 modelos diferentes antes de repetir proveedor
