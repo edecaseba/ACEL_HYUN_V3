@@ -1,145 +1,207 @@
 # Procedimiento de Prueba — Controlador de Acelerador (ACEL_HYUN_V3)
-**Firmware:** 1.1.0 · **MCU:** ATmega328P (Arduino Nano) · **Fecha:** 2026-06-11
+**Firmware:** 2.0.0 · **MCU:** ATmega328P (Arduino Nano) · **Fecha:** 2026-06-24
 
-Este documento detalla el procedimiento de prueba en hardware para validar el firmware del controlador de acelerador de la excavadora Hyundai R250 LC7. Las pruebas están diseñadas para garantizar la seguridad funcional (ISO 13849-1), la robustez eléctrica (ISO 7637-2) y el control preciso del actuador utilizando el puente H IBT-2 (BTS7960).
+Este documento detalla el procedimiento de prueba en hardware para validar el firmware del
+controlador de acelerador, incluyendo la nueva calibración interactiva por comando serial,
+auto-tuning PID por relay, y control con asentamiento (anti-ronroneo).
 
 ---
 
 ## Precauciones de Seguridad
-- **Mecánica:** Asegurar que el actuador del acelerador esté desacoplado de la bomba de inyección del motor diésel durante las pruebas iniciales para evitar aceleraciones descontroladas del motor real.
-- **Eléctrica:** Utilizar una fuente de alimentación de 24Vcc con limitación de corriente ajustable (setear límite inicial en 2.0A).
-- **Hardware:** Verificar que el pin `PIN_EN` (D8) esté conectado correctamente al enable del puente H IBT-2 y que existan resistencias de pull-down externas de 10kΩ en las entradas analógicas (`PIN_POT_OP` y `PIN_POT_FEED`) para garantizar que vayan a GND en caso de desconexión física.
-- **Parada de Emergencia:** Tener un interruptor físico de corte de energía de 24Vcc al alcance de la mano en todo momento.
+- **Mecánica:** Asegurar que el actuador del acelerador esté desacoplado de la bomba de
+  inyección del motor diésel durante las pruebas iniciales.
+- **Eléctrica:** Utilizar una fuente de alimentación de 24Vcc con limitación de corriente
+  ajustable (setear límite inicial en 2.0A).
+- **Hardware:** Verificar resistencias de pull-down externas de 10kΩ en pines analógicos.
+- **Parada de Emergencia:** Tener un interruptor físico de corte de energía de 24Vcc al alcance.
 
 ---
 
-## Caso 1: Pedal en Reposo (Estabilización y Zona Muerta)
-**Objetivo:** Verificar que el motor se detiene por completo sin oscilaciones cuando el pedal está en reposo.
+## Fase 1: Calibración Interactiva (CAL)
 
-- **Estímulo:** Soltar el pedal del operador por completo (posición de reposo).
-- **Esperado:** 
-  - El setpoint mapeado debe ser 0%.
-  - El actuador debe moverse hacia la posición de reposo (0%).
-  - Al entrar en la zona muerta ($|error| \le 3$), el PID debe detener el motor inmediatamente (`deberiaDetener = true`).
-  - El tiempo de estabilización desde que entra en la zona muerta hasta la detención total debe ser $< 100\text{ ms}$.
-- **PASA si:** El motor se detiene por completo en $< 100\text{ ms}$ sin oscilaciones ni zumbidos audibles alrededor del punto de reposo.
-- **FALLA si:** El motor oscila continuamente (caza) alrededor del reposo o tarda más de $100\text{ ms}$ en detenerse.
+Al primer encendido (EEPROM vacía) o al enviar `CAL`, el sistema entra en modo calibración
+interactiva. El técnico sigue las instrucciones por serial y confirma cada paso.
 
----
+### Paso 1 — Pedal mínimo (ralentí)
+```
+SERIAL TX: "Paso 1/6: Coloque el acelerador en RALENTI (mínimo) y envíe OK"
+TÉCNICO:  Posiciona físicamente el pedal en ralentí y envía → OK
+SISTEMA:  Lee A0 filtrado, guarda cfg.pMin
+          "pMin = XXX guardado."
+```
 
-## Caso 2: Rampa Suave (Seguimiento de Slew Limitado)
-**Objetivo:** Verificar el seguimiento suave y continuo de la posición ante cambios lentos del pedal.
+### Paso 2 — Pedal máximo (full RPM)
+```
+SERIAL TX: "Paso 2/6: Coloque el acelerador a MAXIMAS RPM y envíe OK"
+TÉCNICO:  Pisa el pedal a fondo y envía → OK
+SISTEMA:  Lee A0 filtrado, guarda cfg.pMax
+          "pMax = XXX guardado."
+```
 
-- **Estímulo:** Mover el pedal del operador de forma continua y suave desde 0% hasta 100% en un lapso de aproximadamente 3 segundos.
-- **Esperado:**
-  - El setpoint sube gradualmente de 0% a 100%.
-  - La posición del actuador (`ActP`) sigue al setpoint de manera suave y lineal.
-  - El error instantáneo se mantiene por debajo de 5 unidades en todo momento.
-- **PASA si:** El actuador sigue la rampa sin saltos bruscos, trabas mecánicas ni oscilaciones, manteniendo el error instantáneo $< 5\%$.
-- **FALLA si:** El actuador se mueve a tirones, se traba, o el error supera el 5% durante la rampa.
+### Paso 3 — Test de dirección del motor (IBT-2)
+```
+SERIAL TX: "Paso 3/6: Use FWD/REV/STOP para probar dirección del motor.
+            Luego envíe: DIR FWD ACEL  o  DIR REV ACEL"
+TÉCNICO:  Envía → FWD  (el motor se mueve)
+          Envía → REV  (el motor se mueve al revés)
+          Envía → STOP (detiene)
+          Determina qué dirección ACELERA (aumenta RPM/posición)
+          Envía → DIR FWD ACEL   (si FWD acelera)
+               o → DIR REV ACEL   (si REV acelera)
+SISTEMA:  Guarda cfg.accelIsFwd
+          "Dirección: R_PWM ACELERA. Guardado."
+```
 
----
+### Paso 4 — Límite máximo del actuador
+```
+SERIAL TX: "Paso 4/6: Use MOVEFWD para ir al tope de aceleración.
+            Cuando llegue, envíe SETMAX"
+TÉCNICO:  Envía → MOVEFWD (motor avanza hacia aceleración)
+          Observa el actuador hasta que llegue al tope físico
+          Envía → SETMAX
+SISTEMA:  Guarda cfg.mMax = feedback actual, detiene motor
+          "mMax = XXX guardado."
+```
 
-## Caso 3: Escalón Brusco (Protección de Topes Físicos)
-**Objetivo:** Verificar que el actuador no golpea ni supera los límites mecánicos calibrados ante cambios bruscos de consigna.
+### Paso 5 — Límite mínimo del actuador
+```
+SERIAL TX: "Paso 5/6: Use MOVEREV para ir al tope de desaceleración.
+            Cuando llegue, envíe SETMIN"
+TÉCNICO:  Envía → MOVEREV (motor retrocede)
+          Envía → SETMIN al llegar al tope opuesto
+SISTEMA:  Guarda cfg.mMin, detiene motor
+          "mMin = XXX guardado."
+```
 
-- **Estímulo:** Presionar el pedal a fondo instantáneamente (escalón de 0% a 100%).
-- **Esperado:**
-  - El setpoint salta inmediatamente a 100%.
-  - El PID aplica máxima velocidad (PWM = 255) para corregir el error.
-  - Al alcanzar la posición máxima calibrada (`rFe >= cfg.mMax`), el lazo de control debe llamar a `detener()`, resetear la integral y el error anterior, evitando sobrepasar el tope físico.
-- **PASA si:** El actuador llega al 100% rápidamente pero se detiene de forma precisa en el límite calibrado sin golpear mecánicamente el tope físico con fuerza destructiva.
-- **FALLA si:** El actuador golpea violentamente el tope físico, supera el valor de `cfg.mMax` o se produce un bloqueo por impacto.
-
----
-
-## Caso 4: Soltar Pedal Brusco (Control de Overshoot)
-**Objetivo:** Verificar que el término derivativo (Kd) amortigua correctamente el frenado al soltar el pedal.
-
-- **Estímulo:** Soltar el pedal bruscamente desde la posición de 100% a 0%.
-- **Esperado:**
-  - El setpoint cae instantáneamente a 0%.
-  - El actuador retrocede a alta velocidad.
-  - Al acercarse a 0%, el término derivativo ($K_d = 1.5$) debe actuar como freno dinámico.
-  - El actuador debe detenerse en la zona muerta de reposo con un overshoot mínimo.
-- **PASA si:** El actuador se detiene en 0% con un overshoot menor al 5% del rango total (es decir, no sobrepasa el límite inferior por más de 5 unidades en la escala 0-100) y se estabiliza en un solo ciclo de frenado.
-- **FALLA si:** El overshoot supera el 5% o el actuador oscila más de una vez antes de detenerse.
-
----
-
-## Caso 5: Pérdida de Señal del Pedal (Safe State)
-**Objetivo:** Validar el cumplimiento de la norma ISO 13849-1 ante fallas de cableado del sensor del pedal.
-
-- **Estímulo:** Con el sistema encendido y el pedal a media carrera (ej. 50%), desconectar físicamente el cable de señal del potenciómetro del pedal (`PIN_POT_OP` / A0).
-- **Esperado:**
-  - La resistencia de pull-down externa de 10kΩ debe llevar la tensión del pin A0 a 0V (GND).
-  - La lectura analógica filtrada cae por debajo de `cfg.pMin`.
-  - El setpoint mapeado va a 0% (reposo seguro).
-  - El actuador debe regresar inmediatamente a la posición de reposo (0%) en $< 100\text{ ms}$.
-- **PASA si:** El actuador regresa a la posición de reposo (0%) de forma segura en $< 100\text{ ms}$ tras la desconexión.
-- **FALLA si:** El actuador se queda en la posición actual, se mueve a una posición aleatoria, o acelera hacia el 100%.
+### Paso 6 — Guardar o tunear
+```
+SERIAL TX: "Paso 6/6: Envíe SAVE para guardar en EEPROM
+            o TUNE para auto-ajustar PID primero."
+TÉCNICO:  Envía → SAVE  (guarda límites, KP/KI/KD por defecto)
+               o → TUNE  (ejecuta auto-tuning antes de guardar)
+```
 
 ---
 
-## Caso 6: Sobrecorriente por Bloqueo / Stall (Safe State Activo)
-**Objetivo:** Verificar la detección de stall y el bloqueo inmediato de la etapa de potencia para proteger el motor y el puente H.
+## Fase 2: Auto-tuning PID (TUNE)
 
-- **Estímulo:** Bloquear mecánicamente el eje del actuador para impedir su movimiento y aplicar un cambio de consigna en el pedal.
-- **Esperado:**
-  - La corriente del motor sube bruscamente.
-  - La lectura analógica en `PIN_IS_SENSE` (A2) supera el umbral de stall (`STALL_CURRENT_ADC = 750`, equivalente a ~3.6A).
-  - El filtro EMA de corriente (`filterCurrent`) actualiza el valor filtrado.
-  - Al superar el umbral, `monitorStallCurrent()` debe:
-    1. Deshabilitar el puente H poniendo `PIN_EN` (D8) en LOW.
-    2. Detener las salidas PWM (`PIN_R_PWM` y `PIN_L_PWM` en LOW).
-    3. Registrar el estado de falla (`sysState.isFaulted = true`).
-    4. Resetear el acumulador integral y el error anterior a 0.
-    5. Imprimir por Serial: `"CRITICAL: STALL DETECTADO. Puente H bloqueado."`
-- **PASA si:** El puente H se deshabilita por completo, el motor se desenergiza inmediatamente, se reporta la falla por Serial y el sistema ignora cualquier movimiento del pedal hasta recibir el comando serial `RST`.
-- **FALLA si:** El motor sigue recibiendo energía, el puente H permanece habilitado, o no se registra la falla de stall.
+En cualquier momento post-calibración, el técnico puede enviar `TUNE` para ejecutar
+relay auto-tuning (Åström-Hägglund). El sistema:
 
----
+1. Mueve el actuador a la posición media (~50%)
+2. Oscila el relay alrededor del setpoint con histéresis de ±5%
+3. Mide el período último (Tu) y la amplitud de oscilación (a)
+4. Calcula Ku = 4h / (πa)
+5. Aplica Ziegler-Nichols:
+   - Kp = 0.6 · Ku
+   - Ki = 1.2 · Ku / Tu
+   - Kd = 0.075 · Ku · Tu
+6. Guarda KP/KI/KD en EEPROM
 
-## Caso 7: Cambio de Dirección (Dead-Time de Seguridad)
-**Objetivo:** Verificar que se respeta el tiempo muerto de 150ms al invertir el giro para evitar cortocircuitos (shoot-through) en el puente H.
+```
+=== AUTO-TUNING PID (RELAY) ===
+Moviendo a posición media...
+TUNE: Relay iniciado. Observe oscilación...
+..... (puntos = ciclos detectados)
+TUNE: Ciclos suficientes.
 
-- **Estímulo:** Mover el pedal rápidamente de 20% a 80% (forzando un cambio de dirección del motor). Conectar un osciloscopio de doble canal a los pines `PIN_R_PWM` (D10) y `PIN_L_PWM` (D9).
-- **Esperado:**
-  - Al detectar el cambio de dirección, el firmware debe poner ambas salidas PWM en LOW inmediatamente.
-  - Se debe activar un tiempo muerto no bloqueante de 150ms (`DEAD_TIME_MS = 150`).
-  - Durante este tiempo, ambas salidas deben permanecer estrictamente en LOW.
-  - El acumulador integral y el error anterior deben resetearse a 0.
-  - Transcurridos los 150ms, la salida opuesta puede comenzar a conmutar.
-- **PASA si:** El osciloscopio muestra que ambas señales PWM permanecen en LOW simultáneamente durante al menos 150ms antes de que la otra señal comience a oscilar.
-- **FALLA si:** Hay solapamiento de señales (ambas en HIGH o conmutando al mismo tiempo) o si el tiempo muerto es menor a 150ms.
-
----
-
-## Caso 8: Encendido sin EEPROM Válida (Calibración Automática)
-**Objetivo:** Verificar que el sistema inicia la calibración automática si no detecta datos válidos en la EEPROM.
-
-- **Estímulo:** Enviar el comando serial `CAL` (que invalida la EEPROM escribiendo `cfg.cv = 0` y reinicia el sistema) o encender un Arduino Nano con la EEPROM en blanco.
-- **Esperado:**
-  - En `setup()`, el firmware detecta que `cfg.cv != MAGIC_NUMBER`.
-  - Se inicia automáticamente la máquina de estados de calibración no bloqueante (`calState = CalState::WAIT_PEDAL_MIN`).
-  - Se imprime por Serial: `"=== RUTINA DE CALIBRACION DE PRECISION ==="`.
-- **PASA si:** El sistema entra inmediatamente en modo calibración al encender y guía al operador paso a paso a través del puerto Serial sin bloquear el Watchdog.
-- **FALLA si:** El sistema entra en modo de operación normal directamente con datos inválidos, o se bloquea durante el arranque.
+=== AUTO-TUNING COMPLETO ===
+Tu = 0.350 s
+Ku = 12.45
+Kp = 7.47
+Ki = 0.0534
+Kd = 0.33
+Valores guardados en EEPROM.
+```
 
 ---
 
-## Guía de Ajuste de Parámetros PID en Hardware
-Si el comportamiento del actuador requiere un ajuste fino en el campo, siga estas directrices:
+## Fase 3: Operación Normal (Control con Asentamiento)
 
-1. **Ajuste de Ganancia Proporcional ($K_p$):**
-   - Comience con $K_p = 2.0$, $K_i = 0.0$, $K_d = 0.0$.
-   - Incremente $K_p$ gradualmente hasta que el actuador responda rápidamente pero comience a oscilar levemente al llegar al setpoint.
-   - Reduzca $K_p$ un 20% desde ese punto límite.
+Post-calibración, el sistema controla el motor continuamente con:
 
-2. **Ajuste de Ganancia Derivativa ($K_d$):**
-   - Con el $K_p$ ajustado, incremente $K_d$ gradualmente (comience con $0.5$) para amortiguar las oscilaciones y reducir el overshoot al soltar el pedal.
-   - Un $K_d$ demasiado alto introducirá ruido y vibraciones de alta frecuencia en el actuador debido a la amplificación del ruido de lectura analógica.
+- **Zona muerta:** |error| ≤ 3 → no mueve motor
+- **Asentamiento:** |error| ≤ 3 por 100ms → apaga motor, resetea integral, marca `asentado`
+- **Reactivación:** |error| > 6 → despierta PID, reanuda control
+- **Reporte serial** cada 250ms: SetP / Act / Err / Kp / Ki / Kd
 
-3. **Ajuste de Ganancia Integral ($K_i$):**
-   - Incremente $K_i$ lentamente (comience con $0.1$) para eliminar el error de estado estacionario (offset) causado por la fricción mecánica o resortes de retorno.
-   - El límite de anti-windup está fijado en $\pm 50.0$ para evitar que la integral acumule un valor excesivo que cause un overshoot inaceptable. Si el actuador tarda en reaccionar tras un error sostenido, verifique que el acumulador integral no esté saturando prematuramente.
+El motor permanece **completamente apagado (PWM=0)** mientras el pedal esté quieto.
+Solo se energiza cuando el operador mueve el pedal más allá del umbral de reactivación.
+
+---
+
+## Comandos Seriales — Referencia Rápida
+
+| Comando | Modo | Función |
+|---------|------|---------|
+| `CAL` | Cualquiera | Inicia calibración interactiva |
+| `OK` | CAL (pasos 1-2) | Confirma posición del pedal |
+| `FWD` | CAL (paso 3) | Mueve motor adelante (test dirección) |
+| `REV` | CAL (paso 3) | Mueve motor atrás |
+| `STOP` | CAL / TUNE | Detiene motor inmediatamente |
+| `DIR FWD ACEL` | CAL (paso 3) | FWD = acelerar |
+| `DIR REV ACEL` | CAL (paso 3) | REV = acelerar |
+| `MOVEFWD` | CAL (pasos 4-5) | Mueve hacia aceleración |
+| `MOVEREV` | CAL (pasos 4-5) | Mueve hacia desaceleración |
+| `SETMAX` | CAL (paso 4) | Captura feedback como límite superior |
+| `SETMIN` | CAL (paso 5) | Captura feedback como límite inferior |
+| `SAVE` | CAL (paso 6) | Guarda configuración en EEPROM |
+| `TUNE` | Post-CAL | Ejecuta relay auto-tuning PID |
+| `RST` | Cualquiera | Resetea condición de falla (stall) |
+
+---
+
+## Procedimiento Completo de Puesta en Marcha
+
+1. **Conexión:** Alimentar el sistema 24V, conectar USB-Serial a 115200 baud
+2. **Primer encendido:** El sistema inicia `CAL` automáticamente si EEPROM está virgen
+3. **Seguir pasos 1-6** de la calibración interactiva
+4. **Opcional:** Enviar `TUNE` para auto-ajustar PID
+5. **Operación:** El PID controla el motor continuamente con asentamiento
+6. **Si falla (stall):** Enviar `RST` para despejar fault
+
+---
+
+## Casos de Prueba en Hardware
+
+### Caso 1: Calibración de pedal mínimo
+- Enviar `CAL`, seguir instrucciones hasta paso 1
+- Poner pedal en ralentí, enviar `OK`
+- **PASA si:** `pMin` se guarda con un valor coherente (~0-200 para pedal suelto)
+
+### Caso 2: Calibración de pedal máximo
+- En paso 2, pisar pedal a fondo, enviar `OK`
+- **PASA si:** `pMax` > `pMin` + 200
+
+### Caso 3: Test de dirección
+- En paso 3, enviar `FWD` y `REV`, observar dirección
+- Enviar `DIR FWD ACEL` o `DIR REV ACEL`
+- **PASA si:** El motor responde a ambos comandos y la dirección se guarda
+
+### Caso 4: Captura de límites del actuador
+- En pasos 4-5, mover a topes y enviar `SETMAX`/`SETMIN`
+- **PASA si:** `mMax > mMin` con diferencia > 50
+
+### Caso 5: SAVE en EEPROM
+- En paso 6, enviar `SAVE`
+- **PASA si:** Mensaje "CALIBRACION GUARDADA" y al reiniciar no entra en CAL
+
+### Caso 6: Auto-tuning TUNE
+- Post-calibración, enviar `TUNE`
+- **PASA si:** El relay oscila ~5 ciclos, calcula valores y los guarda
+
+### Caso 7: Asentamiento
+- Con pedal quieto, observar reporte serial
+- **PASA si:** El motor está completamente apagado y aparece `[ASENTADO]`
+
+### Caso 8: Reactivación
+- Mover el pedal rápidamente
+- **PASA si:** El PID se reactiva, el motor se mueve suavemente, sin ronroneo
+
+### Caso 9: Stall
+- Bloquear el actuador con el motor en movimiento
+- **PASA si:** `monitorStallCurrent()` detecta sobrecorriente, bloquea EN, mensaje crítico
+
+### Caso 10: RST post-falla
+- Enviar `RST` tras un stall
+- **PASA si:** Fault se limpia, motor vuelve a responder

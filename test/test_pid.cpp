@@ -8,6 +8,8 @@
  * El algoritmo PID se prueba directamente desde src/pid_controller.h
  * (funcion pura, sin dependencias de hardware).
  *
+ * v2.0: KP/KI/KD se pasan como parámetros runtime en PidInput.
+ *
  * MCU target: ATmega328P (Arduino Nano)
  * Compilacion: pio test -e nanoatmega328
  */
@@ -19,6 +21,11 @@
 #include <stdlib.h>
 
 #include "../src/pid_controller.h"
+
+// Valores de prueba equivalentes a los antiguos constexpr
+constexpr float KP_TEST = 4.0f;
+constexpr float KI_TEST = 0.5f;
+constexpr float KD_TEST = 1.5f;
 
 // ==========================================
 // --- Fixtures ---
@@ -44,7 +51,7 @@ void test_proporcional_error_positivo(void) {
     float integral = 0.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -64,7 +71,7 @@ void test_proporcional_error_negativo(void) {
     float integral = 0.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -86,7 +93,7 @@ void test_zona_muerta_no_acumula_integral(void) {
     float integral = 10.0f;  // Valor previo
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -102,7 +109,7 @@ void test_zona_muerta_limite_superior(void) {
     float integral = 5.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -117,7 +124,7 @@ void test_zona_muerta_limite_inferior(void) {
     float integral = 5.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -132,7 +139,7 @@ void test_fuera_zona_muerta_acumula(void) {
     float integral = 0.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -153,7 +160,7 @@ void test_acumulacion_integral_creciente(void) {
 
     // Simular 5 iteraciones con error = 10
     for (int i = 0; i < 5; ++i) {
-        PidInput in = { error, errorPrev, integral, Ts };
+        PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
         PidOutput out;
         pidCompute(in, out);
         integral = out.integralAccumulator;
@@ -172,7 +179,7 @@ void test_acumulacion_integral_negativa(void) {
 
     // Simular 3 iteraciones con error = -10
     for (int i = 0; i < 3; ++i) {
-        PidInput in = { error, errorPrev, integral, Ts };
+        PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
         PidOutput out;
         pidCompute(in, out);
         integral = out.integralAccumulator;
@@ -195,7 +202,7 @@ void test_antiwindup_limite_superior(void) {
     int16_t errorPrev = 0;
 
     // error grande positivo, Ts grande -> sobrepasa limite
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -210,7 +217,7 @@ void test_antiwindup_limite_inferior(void) {
     int16_t error = -50;
     int16_t errorPrev = 0;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -226,7 +233,7 @@ void test_antiwindup_acumulacion_mantiene_limite(void) {
 
     // Aunque el error siga, no debe exceder el limite
     for (int i = 0; i < 10; ++i) {
-        PidInput in = { error, errorPrev, integral, Ts };
+        PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
         PidOutput out;
         pidCompute(in, out);
         integral = out.integralAccumulator;
@@ -243,7 +250,7 @@ void test_antiwindup_no_limita_sin_necesidad(void) {
     int16_t error = 5;
     int16_t errorPrev = 0;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
@@ -286,15 +293,15 @@ void test_derivada_contribuye_al_pid(void) {
     float integral = 0.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
     // P = 20, D = 750, I = 0.025
     // salidaFloat = 20.0 + 750.0 + 0.025 = 770.025
-    float esperado = (static_cast<float>(error) * KP)
-                   + (static_cast<float>(error - errorPrev) * KD / Ts)
-                   + (static_cast<float>(error) * KI * Ts);
+    float esperado = (static_cast<float>(error) * KP_TEST)
+                   + (static_cast<float>(error - errorPrev) * KD_TEST / Ts)
+                   + (static_cast<float>(error) * KI_TEST * Ts);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, esperado, out.salidaFloat);
 }
 
@@ -305,15 +312,15 @@ void test_derivada_cero_error_estable(void) {
     float integral = 0.0f;
     float Ts = 0.01f;
 
-    PidInput in = { error, errorPrev, integral, Ts };
+    PidInput in = { error, errorPrev, integral, Ts, KP_TEST, KI_TEST, KD_TEST };
     PidOutput out;
     pidCompute(in, out);
 
     // P = 40, D = 0, I = 0.05
     // salidaFloat = 40.05
-    float esperado = (static_cast<float>(error) * KP)
-                   + (0.0f * KD)
-                   + (static_cast<float>(error) * KI * Ts);
+    float esperado = (static_cast<float>(error) * KP_TEST)
+                   + (0.0f * KD_TEST)
+                   + (static_cast<float>(error) * KI_TEST * Ts);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, esperado, out.salidaFloat);
 }
 

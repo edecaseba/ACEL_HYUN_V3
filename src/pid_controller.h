@@ -2,11 +2,14 @@
  * @brief Controlador PID en tiempo discreto — algoritmo puro extraído
  *
  * Proposito: algoritmo PID reutilizable entre main.cpp y tests unitarios.
- * Zero Dynamic RAM: solo tipos fijos, sinalloc/delete.
+ * Zero Dynamic RAM: solo tipos fijos, sin alloc/delete.
  * Framework-agnostic: no depende de Arduino.h, solo de <stdint.h> y <stdlib.h>.
  *
  * MCU target: ATmega328P (Arduino Nano) / ESP32-S3
  * Framework: agnostico
+ *
+ * v2.0: KP/KI/KD pasan de constexpr a parámetros runtime en PidInput.
+ *        Se eliminan las constantes globales KP, KD, KI.
  */
 #ifndef PID_CONTROLLER_H
 #define PID_CONTROLLER_H
@@ -16,13 +19,10 @@
 #include <math.h>
 
 // ==========================================
-// --- Constantes del PID ---
+// --- Constantes del algoritmo (fijas) ---
 // ==========================================
-constexpr float KP              = 4.0f;
-constexpr float KD              = 1.5f;
-constexpr float KI              = 0.5f;
-constexpr float INTEGRAL_LIMIT  = 50.0f;
-constexpr uint8_t ZONA_MUERTA   = 3;
+constexpr float INTEGRAL_LIMIT     = 50.0f;
+constexpr uint8_t ZONA_MUERTA      = 3;
 constexpr uint8_t PWM_MIN_OPERACION = 90;
 
 // ==========================================
@@ -31,20 +31,28 @@ constexpr uint8_t PWM_MIN_OPERACION = 90;
 
 /**
  * @brief Entrada del controlador PID
+ *
  * @param errorActual      Error actual (setpoint - posicion)
  * @param errorAnterior    Error de la iteracion anterior
  * @param integralAccumulator  Acumulador integral (entrada/salida)
  * @param Ts               Tiempo de muestreo en segundos (> 0)
+ * @param kp               Ganancia proporcional (runtime, desde EEPROM)
+ * @param ki               Ganancia integral (runtime, desde EEPROM)
+ * @param kd               Ganancia derivativa (runtime, desde EEPROM)
  */
 struct PidInput {
     int16_t errorActual;
     int16_t errorAnterior;
     float   integralAccumulator;
     float   Ts;
+    float   kp;
+    float   ki;
+    float   kd;
 };
 
 /**
  * @brief Salida del controlador PID
+ *
  * @param integralAccumulator  Acumulador integral actualizado
  * @param errorAnterior        errorActual (para realimentar en proxima llamada)
  * @param vel                  Velocidad PWM (0-255)
@@ -103,7 +111,9 @@ inline float clampFloat(float val, float lo, float hi) {
  * Anti-windup: integral satura en [-INTEGRAL_LIMIT, +INTEGRAL_LIMIT]
  * Zona muerta: si |error| <= ZONA_MUERTA, deberiaDetener = true
  *
- * @param in  [in]  Parametros de entrada
+ * KP/KI/KD se toman de los campos kp/ki/kd de PidInput (valores runtime)
+ *
+ * @param in  [in]  Parametros de entrada (incluye kp, ki, kd)
  * @param out [out] Resultados del PID
  */
 inline void pidCompute(const PidInput& in, PidOutput& out) {
@@ -120,7 +130,7 @@ inline void pidCompute(const PidInput& in, PidOutput& out) {
     }
 
     // --- Acumulacion integral con anti-windup ---
-    out.integralAccumulator += static_cast<float>(in.errorActual) * KI * in.Ts;
+    out.integralAccumulator += static_cast<float>(in.errorActual) * in.ki * in.Ts;
 
     out.integralAccumulator = clampFloat(out.integralAccumulator, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
 
@@ -129,8 +139,8 @@ inline void pidCompute(const PidInput& in, PidOutput& out) {
     derivada /= in.Ts;
 
     // --- Salida PID completa ---
-    out.salidaFloat = (static_cast<float>(in.errorActual) * KP)
-                    + (derivada * KD)
+    out.salidaFloat = (static_cast<float>(in.errorActual) * in.kp)
+                    + (derivada * in.kd)
                     + out.integralAccumulator;
 
     // --- Clamp de velocidad PWM ---
