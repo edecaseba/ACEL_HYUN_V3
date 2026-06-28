@@ -1,0 +1,51 @@
+{
+  "project_state_version": 1,
+  "first_run_complete": true,
+  "project_type": "existente",
+  "last_session_date": "2026-06-27T22:37:00-03:00",
+  "session_count": 1,
+  "audit_results": {
+    "total_agents": 15,
+    "activos": ["build","compaction","calibrator","coder","documenter","explore","meta-orquestador","planner","reviewer","slicer","tester","general","plan","summary","title"],
+    "corregidos": ["build","compaction","calibrator","coder","documenter","explore","meta-orquestador","planner","reviewer","slicer","tester","general","plan","summary","title"],
+    "archivados": ["calibrator","coder","documenter","explore","planner","reviewer","slicer","tester"]
+  },
+  "confirmed_by_user": {
+    "audit": true,
+    "corrections_applied": true,
+    "interview_complete": true
+  },
+  "snapshot": {
+    "agent_files": [
+      ".opencode/agents/build.md",
+      ".opencode/agents/compaction.md",
+      ".opencode/agents/calibrator.md",
+      ".opencode/agents/coder.md",
+      ".opencode/agents/documenter.md",
+      ".opencode/agents/explore.md",
+      ".opencode/agents/meta-orquestador.md",
+      ".opencode/agents/planner.md",
+      ".opencode/agents/reviewer.md",
+      ".opencode/agents/slicer.md",
+      ".opencode/agents/tester.md",
+      ".opencode/agents/general.md",
+      ".opencode/agents/plan.md",
+      ".opencode/agents/summary.md",
+      ".opencode/agents/title.md"
+    ],
+    "skill_dirs": [
+      ".opencode/skills/skill-iso-safety",
+      ".opencode/skills/validate_orchestration"
+    ],
+    "key_manifests": {
+      "opencode.json": "2026-06-27 22:37:41.726932769 -0300",
+      "AGENTS.md": "2026-06-27 22:37:46.949060787 -0300"
+    },
+    "git_last_commit": "17f4cf283291f4b50c9c5d5956f1824f124955be"
+  },
+  "pipeline": {
+    "ultimo_agente_ejecutado": null,
+    "ultimo_handoff": null
+  },
+  "session_log_path": ".opencode/session_log.md"
+}
