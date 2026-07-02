@@ -42,6 +42,18 @@ constexpr uint8_t TUNE_PWM       = 140;   // Velocidad para relay tuning
 constexpr uint16_t TIEMPO_ASENTAMIENTO_MS = 100;
 constexpr uint8_t  UMBRAL_REACTIVACION    = 6;
 
+static void configurarPinesSinUso()
+{
+    const uint8_t pinesPullUp[] = {2,3,4,5,6,7,11,12,13};
+    for (uint8_t p : pinesPullUp) {
+        pinMode(p, INPUT_PULLUP);
+    }
+    // Ensure PWM pins start low (will be reconfigured later)
+    digitalWrite(PIN_L_PWM, LOW);
+    digitalWrite(PIN_R_PWM, LOW);
+    digitalWrite(PIN_EN, LOW);
+}
+
 constexpr int16_t  MAGIC_NUMBER   = 111;
 constexpr float    DEFAULT_KP     = 2.0f;
 constexpr float    DEFAULT_KI     = 0.1f;
@@ -953,6 +965,7 @@ void setup() {
     wdt_disable();
 
     Serial.begin(115200);
+    configurarPinesSinUso();
 
     initMotorHardware();
 

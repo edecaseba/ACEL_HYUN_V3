@@ -116,10 +116,10 @@
 - Mejorado cálculo de varianza para evitar subdesbordamiento usando enteros con signo.
 - Añadido pequeño `yield()` en `loop()` (delayMicroseconds(100)) para liberar tiempo de UART y evitar sobrecarga del buffer serial.
 - Todas las pruebas unitarias continúan pasando.
-## v2.0.3 — 2026-09-16
-### Correcciones de rendimiento y seguridad
-- Eliminado uso de `delay()` en la calibración de sobre‑corriente (overcurrent.cpp) y reemplazado por espera no bloqueante basada en `micros()`.
-- Agregado `#include <math.h>` para uso de `sqrt()`.
-- Mejorado cálculo de varianza para evitar subdesbordamiento usando enteros con signo.
-- Añadido pequeño `yield()` en `loop()` (delayMicroseconds(100)) para liberar tiempo de UART y evitar sobrecarga del buffer serial.
-- Todas las pruebas unitarias continúan pasando.
+
+## v2.0.4 — 2026-09-16
+### Configuración de pines sin uso
+- Añadida función `configurarPinesSinUso()` que pone en `INPUT_PULLUP` los pines digitales no utilizados (D2‑D7, D11‑D13) y asegura que los pines usados queden en estado correcto.
+- Llamada desde `setup()` antes de `initMotorHardware()`.
+- Los pines analógicos A6 y A7 se dejan tal cual (pull‑down externo según indicación).
+- Todas las pruebas unitarias continúan pasando (salvo problemas conocidos en el entorno de prueba externos al código).
