@@ -659,29 +659,37 @@ static void tickTuning() {
                 break;
             }
 
-            float sumPeriod = 0.0f;
-            float sumAmp = 0.0f;
-            uint8_t valid = 0;
+            // Usar los picos/valles REALES medidos durante la oscilación completa
+            // Encontrar el máximo global y mínimo global de todos los ciclos
+            float globalPeak = -1000.0f;
+            float globalValley = 1000.0f;
             for (uint8_t i = 0; i < tuneCtx.cycleCount; ++i) {
-                if (tuneCtx.periods[i] > 0.0f) {
+                if (tuneCtx.peaks[i] > globalPeak) globalPeak = tuneCtx.peaks[i];
+                if (tuneCtx.valleys[i] < globalValley) globalValley = tuneCtx.valleys[i];
+            }
+
+            float amplitudGlobal = (globalPeak - globalValley) / 2.0f;
+
+            // Calcular período promedio usando cruces válidos (período completo = 2 * media ciclo)
+            float sumPeriod = 0.0f;
+            uint8_t validPeriods = 0;
+            for (uint8_t i = 0; i < tuneCtx.cycleCount; ++i) {
+                if (tuneCtx.periods[i] > 0.0f && tuneCtx.periods[i] < 100.0f) {  // Período razonable < 100s
                     sumPeriod += tuneCtx.periods[i];
-                    float a = (tuneCtx.peaks[i] - tuneCtx.valleys[i]) / 2.0f;
-                    if (a > 0.5f) {  // Umbral más permisivo (0.5% en lugar de 1.0%)
-                        sumAmp += a;
-                        ++valid;
-                    }
+                    ++validPeriods;
                 }
             }
 
-            if (valid < 2) {
-                Serial.println(F("TUNE: Amplitud muy pequena. PID calculado pero no validado."));
+            // Validación MUY permisiva: si oscilamos entre límites reales, aceptamos
+            if (validPeriods == 0 || amplitudGlobal < 5.0f) {  // Amplitud mínima 5% del rango
+                Serial.println(F("TUNE: Oscilacion insuficiente. PID calculado pero no validado."));
                 Serial.println(F("Envia SAVEPID para guardar anyway, o CAL para recalibrar."));
-                tuneCtx.phase = TunePhase::SAVE_PENDING;  // Nuevo estado: PID calculado pero no validado
+                tuneCtx.phase = TunePhase::SAVE_PENDING;
                 break;
             }
 
-            float Tu = sumPeriod / static_cast<float>(valid);
-            float a  = sumAmp / static_cast<float>(valid);
+            float Tu = sumPeriod / static_cast<float>(validPeriods);
+            float a  = amplitudGlobal;
 
             constexpr float H_ESTIMADO = 50.0f;
             constexpr float PI_F = 3.14159265f;
@@ -703,6 +711,8 @@ static void tickTuning() {
             tuneCtx.Ku = Ku;
 
             Serial.println(F("\n=== AUTO-TUNING COMPLETO ==="));
+            Serial.print(F("Rango real: ")); Serial.print(globalValley, 1); Serial.print(F(" - ")); Serial.println(globalPeak, 1);
+            Serial.print(F("Amplitud: ")); Serial.print(a, 1); Serial.println(F("%"));
             Serial.print(F("Tu = ")); Serial.print(Tu, 3); Serial.println(F(" s"));
             Serial.print(F("Ku = ")); Serial.println(Ku, 2);
             Serial.print(F("Kp = ")); Serial.println(Kp, 2);
