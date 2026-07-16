@@ -164,6 +164,7 @@ static uint32_t deadTimeUntil  = 0;
 static bool     deadTimeActive = false;
 static bool     lastUsarR_PWM  = true;
 static bool     firstMovementAfterStop = true;
+static bool     tuningLimitCycle = false;  // Desactiva dead-time en LIMIT_CYCLE
 
 static bool     asentado           = false;
 static uint32_t asentadoTimer      = 0;
@@ -241,7 +242,8 @@ void mover(uint8_t vel, bool acelera) {
     ActuatorDirection targetDir = usarR_PWM ? ActuatorDirection::FORWARD : ActuatorDirection::REVERSE;
 
     // Saltar dead-time en primer movimiento tras detenerse (ambos PWM en LOW = seguro)
-    if (firstMovementAfterStop) {
+    // También saltar dead-time durante LIMIT_CYCLE tuning (cambios rápidos controlados)
+    if (firstMovementAfterStop || tuningLimitCycle) {
         firstMovementAfterStop = false;
     } else if (usarR_PWM != lastUsarR_PWM) {
         if (!deadTimeActive) {
@@ -569,6 +571,7 @@ static void tickTuning() {
                 deadTimeActive = false;
                 deadTimeUntil = 0;
                 firstMovementAfterStop = true;
+                tuningLimitCycle = true;  // Desactiva dead-time en LIMIT_CYCLE
                 sysState.isFaulted = false;
                 digitalWrite(PIN_EN, HIGH);
                 Serial.println(F("TUNE: En mMax. Iniciando ciclo limite mMax<->mMin..."));
@@ -625,6 +628,7 @@ static void tickTuning() {
                 integralAccumulator = 0.0f;
                 errorAnterior = 0;
                 asentado = false;
+                tuningLimitCycle = false;  // Reactiva dead-time
                 digitalWrite(PIN_EN, HIGH);
             }
             break;
@@ -632,6 +636,7 @@ static void tickTuning() {
 
         case TunePhase::CYCLES_DONE:
             detener();
+            tuningLimitCycle = false;  // Reactiva dead-time
             tuneCtx.phase = TunePhase::CALCULATE;
             break;
 
