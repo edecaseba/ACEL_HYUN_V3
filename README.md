@@ -141,6 +141,22 @@ pio run -e nanoatmega328 -t upload
 - **Flash**: 50.1% (15398/30720 bytes)
 - **Tests**: 30/30 PASS (17 PID + 2 dead-time + 11 overcurrent)
 
+## Horas de Desarrollo
+
+| Fase | Horas Estimadas |
+|------|-----------------|
+| Arquitectura y diseño (HW/SW) | 12 h |
+| PID discreto + anti-windup + dead-time | 16 h |
+| Filtro EMA + ISO 7637-2 compliance | 8 h |
+| Calibración interactiva (6 pasos) | 20 h |
+| Auto-tuning PID (relay + limit cycle) | 24 h |
+| Overcurrent detection + auto-calibración | 12 h |
+| Safe State + Watchdog + ISO 13849 | 10 h |
+| Tests Unity (30 tests) + CI | 14 h |
+| Documentación (README, CHANGELOG, guías) | 8 h |
+| Debugging hardware + validación | 18 h |
+| **TOTAL** | **~148 horas** |
+
 ## Licencia
 
 Uso interno — maquinaria industrial pesada.
