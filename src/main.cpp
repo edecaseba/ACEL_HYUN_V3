@@ -128,6 +128,7 @@ enum class TunePhase : uint8_t {
     LIMIT_CYCLE,      // Bang-bang entre mMin y mMax
     CYCLES_DONE,
     CALCULATE,
+    SAVE_PENDING,     // PID calculado pero no validado (amplitud baja)
     SAVE
 };
 
@@ -651,11 +652,11 @@ static void tickTuning() {
             float sumPeriod = 0.0f;
             float sumAmp = 0.0f;
             uint8_t valid = 0;
-            for (uint8_t i = 1; i < tuneCtx.cycleCount; ++i) {
+            for (uint8_t i = 0; i < tuneCtx.cycleCount; ++i) {
                 if (tuneCtx.periods[i] > 0.0f) {
                     sumPeriod += tuneCtx.periods[i];
                     float a = (tuneCtx.peaks[i] - tuneCtx.valleys[i]) / 2.0f;
-                    if (a > 1.0f) {
+                    if (a > 0.5f) {  // Umbral más permisivo (0.5% en lugar de 1.0%)
                         sumAmp += a;
                         ++valid;
                     }
@@ -663,9 +664,9 @@ static void tickTuning() {
             }
 
             if (valid < 2) {
-                Serial.println(F("TUNE: Amplitud muy pequena. Abortando."));
-                tuneCtx.phase = TunePhase::IDLE;
-                sysMode = SystemMode::OPERATION;
+                Serial.println(F("TUNE: Amplitud muy pequena. PID calculado pero no validado."));
+                Serial.println(F("Envia SAVEPID para guardar anyway, o CAL para recalibrar."));
+                tuneCtx.phase = TunePhase::SAVE_PENDING;  // Nuevo estado: PID calculado pero no validado
                 break;
             }
 
@@ -699,6 +700,11 @@ static void tickTuning() {
             Serial.print(F("Kd = ")); Serial.println(Kd, 4);
 
             tuneCtx.phase = TunePhase::SAVE;
+            break;
+        }
+
+        case TunePhase::SAVE_PENDING: {
+            // PID calculado pero no validado - espera SAVEPID o CAL
             break;
         }
 
@@ -897,8 +903,20 @@ static void procesarComando() {
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
                 Serial.println(F("TUNE abortado por usuario."));
+            } else if (strcmp(cmdBuffer, "SAVEPID") == 0) {
+                if (tuneCtx.phase == TunePhase::SAVE_PENDING) {
+                    cfg.cv = MAGIC_NUMBER;
+                    if (!eepromPutSafe(0, cfg)) { Serial.println(F("EEPROM write failed!")); }
+                    Serial.println(F("PID guardado en EEPROM (sin validar amplitud)."));
+                    Serial.println(F("Envie CAL para recalibrar limites, o RST para operacion normal."));
+                    tuneCtx.phase = TunePhase::IDLE;
+                    sysMode = SystemMode::OPERATION;
+                    calState = CalState::IDLE;
+                } else {
+                    Serial.println(F("SAVEPID solo valido tras aborto por amplitud."));
+                }
             } else {
-                Serial.println(F("En TUNE solo se acepta STOP."));
+                Serial.println(F("En TUNE solo se acepta STOP o SAVEPID."));
             }
             break;
         case SystemMode::OPERATION:
