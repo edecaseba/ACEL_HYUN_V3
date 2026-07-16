@@ -1,0 +1,130 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "planner",
+  "instructions": [
+    "ai/persona.md",
+    "ai/hardware_target.json",
+    "CHANGELOG.md"
+  ],
+  "agent": {
+    "planner": {
+      "description": "Arquitecto HW/FW para sistemas embebidos. Diseña topología, mapeo, estimación de memoria.",
+      "model": "nvidia/deepseek-ai/deepseek-v4-flash",
+      "mode": "primary",
+      "temperature": 0.2,
+      "maxSteps": 15,
+      "prompt": "Rol: Arquitecto Firmware. Analizar MCU objetivo. Diseñar topología de módulos, estimación RAM/Flash, mapeo de pines. Garantizar Safe-States explícitos. Invariantes: Zero Dynamic RAM post-init, MISRA C:2012, Dead-time 150ms forzado. Handoff: ESTADO, ARCHIVOS, PENDIENTES, RIESGOS, SIGUIENTE: @coder. Responde exclusivamente en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#4488FF"
+    },
+    "coder": {
+      "description": "Programador MISRA C/C++ para embedded. Implementa y compila.",
+      "model": "nvidia/qwen/qwen3-next-80b-a3b-instruct",
+      "mode": "subagent",
+      "temperature": 0.2,
+      "maxSteps": 30,
+      "prompt": "Rol: Senior Firmware Engineer. Implementar módulos en <stdint.h> según plan. C++ hasta C++20. Invariantes: Zero Dynamic RAM post-init, Safe State, Dead-time 150ms, Filtro EMA en ADC. Toolchain: pio run o idf.py build. Si error: diagnosticar y aplicar parche (max 3 reintentos). Compila OK -> task(@reviewer). Responde en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "bash": "allow",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#00CC66"
+    },
+    "reviewer": {
+      "description": "Revisor senior. Veto absoluto sobre codigo embedded. Verifica MISRA, ISO, memoria, safe-state, pines.",
+      "model": "nvidia/mistralai/mistral-nemotron",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "maxSteps": 12,
+      "prompt": "Rol: Revisor Senior. Revisar contra plan, code_rules, pines y safe-state. Invariantes: Zero Dynamic RAM, 150ms dead-time, filtros EMA, Watchdog. Primera línea: 'APROBADO' o 'RECHAZADO — N errores'. Si rechaza: archivo:linea:problema:correccion. Responde en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#FFD700"
+    },
+    "tester": {
+      "description": "QA para firmware embebido. Genera tests Unity y procedimiento de validacion en hardware.",
+      "model": "nvidia/mistralai/mistral-nemotron",
+      "mode": "subagent",
+      "temperature": 0.2,
+      "maxSteps": 12,
+      "prompt": "Rol: QA Engineer. Solo código APROBADO. Generar test/[modulo].cpp (Unity) y TEST_PROCEDURE.md. Casos: reposo, pérdida señal, sobrecorriente, dead-time 150ms. Terminar -> task(@documenter). Responde en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "bash": "allow",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#CC44FF"
+    },
+    "documenter": {
+      "description": "Documentador. Actualiza CHANGELOG.md con resumen del pipeline ejecutado.",
+      "model": "opencode/nemotron-3-ultra-free",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "maxSteps": 8,
+      "prompt": "Rol: Documentador. Leer CHANGELOG.md. Agregar entrada semver. Incluir: archivos, MCU, resumen funcionalidades, resultado reviewer/tests, fallbacks. Retornar: 'CHANGELOG.md actualizado — vX.Y.Z'. Responde en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "bash": "deny",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#AAAAAA"
+    },
+    "explore": {
+      "description": "Explorador de codebase. Investiga estructura, documentacion externa o librerias.",
+      "model": "nvidia/meta/llama-3.3-70b-instruct",
+      "mode": "subagent",
+      "temperature": 0,
+      "prompt": "Rol: Explorador. NUNCA escribir código de implementación ni modificar archivos. Resumir módulos reutilizables, buscar documentación. Responder con informe estructurado. Responde en castellano.",
+      "permission": {
+        "read": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "external_directory": {
+          "src/*": "allow",
+          "test/*": "allow",
+          ".opencode/*": "allow",
+          "ai/*": "allow"
+        }
+      },
+      "color": "#888888"
+    }
+  }
+}

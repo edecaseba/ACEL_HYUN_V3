@@ -1,0 +1,117 @@
+{
+  "_comment": "ARCHIVO DE CONFIGURACIÓN DEL MICROCONTROLADOR ACTIVO",
+  "_instruccion": "Todos los agentes leen este archivo antes de actuar. Para cambiar de MCU: modificar 'active_target' al key correspondiente en 'targets'. El orquestador completa 'peripherals' al iniciar cada proyecto.",
+
+  "active_target": "arduino_nano_atmega328p",
+
+  "targets": {
+
+    "arduino_nano_atmega328p": {
+      "label": "Arduino Nano — ATmega328P",
+      "mcu": "ATmega328P",
+      "framework": "arduino",
+      "platform": "atmelavr",
+      "toolchain": "avr-gcc",
+      "clock_mhz": 16,
+      "memory": {
+        "flash_kb": 31.5,
+        "sram_bytes": 2048,
+        "eeprom_bytes": 1024,
+        "bootloader_kb": 0.5
+      },
+      "platformio_env": {
+        "board": "nanoatmega328new",
+        "framework": "arduino",
+        "upload_protocol": "arduino",
+        "monitor_speed": 115200,
+        "build_flags": ["-std=c++17", "-Wall", "-Wextra"],
+        "_nota_cpp": "avr-gcc soporta C++17 con limitaciones. C++20 NO está soportado en esta toolchain.",
+        "lib_deps": ["EEPROM"]
+      },
+      "coding_rules": {
+        "file_extension": ".cpp / .h  (NUNCA .ino)",
+        "timing": "millis() / micros() — prohibido delay()",
+        "memory": "Zero Dynamic RAM post-init — prohibido String, new, malloc, free",
+        "isr_variables": "volatile obligatorio en variables compartidas con ISR",
+        "standard": "MISRA C++:2008 — static_cast explícito, llaves {} obligatorias, tipos fijos <cstdint>",
+        "watchdog": "Include <avr/wdt.h> — wdt_enable(WDTO_2S) en setup(), wdt_reset() en loop()"
+      },
+      "pins": {
+        "PIN_POT_OP":    "A0 — entrada analógica pedal",
+        "PIN_POT_FEED":  "A1 — entrada analógica feedback",
+        "PIN_IS_SENSE":  "A2 — sensor de corriente",
+        "PIN_EN":        "D8 — enable driver",
+        "PIN_L_PWM":     "D9 — PWM canal L (Timer1)",
+        "PIN_R_PWM":     "D10 — PWM canal R (Timer1)"
+      },
+      "peripherals": {
+        "_instruccion": "El orquestador completa estos campos al iniciar 'nuevo proyecto'.",
+        "motor_driver": "IBT-2 (BTS7960) — Puente H dual 43A",
+        "motor_type": "DC brushed 24V — actuador lineal / motorreductor",
+        "machine_description": "Control de posición por pedal (potenciómetro) con feedback de posición (potenciómetro) y protección overcurrent (sensor ACS712/shunt en A2). PID con anti-windup, dead-time 150ms, safe-state por stall/overcurrent/pérdida señal."
+      },
+      "test_framework": "Unity + ArduinoFake (PlatformIO native env)",
+      "src_dir": "src/",
+      "test_dir": "test/"
+    },
+
+    "esp32s3_espidf": {
+      "label": "ESP32-S3 — ESP-IDF",
+      "mcu": "ESP32-S3",
+      "framework": "espidf",
+      "platform": "espressif32",
+      "toolchain": "xtensa-esp32s3-elf-gcc",
+      "clock_mhz": 240,
+      "memory": {
+        "flash_kb": 8192,
+        "sram_bytes": 524288,
+        "psram_bytes": 0
+      },
+      "platformio_env": {
+        "board": "esp32-s3-devkitc-1",
+        "framework": "espidf",
+        "upload_protocol": "esptool",
+        "monitor_speed": 115200,
+        "build_flags": ["-std=c++17", "-Wall", "-Wextra"],
+        "lib_deps": []
+      },
+      "coding_rules": {
+        "file_extension": ".cpp / .h",
+        "timing": "vTaskDelay() / esp_timer_get_time() — prohibido delay()",
+        "memory": "Heap permitido durante init — preferir static en tasks de FreeRTOS",
+        "isr_variables": "volatile + portENTER_CRITICAL() / portEXIT_CRITICAL()",
+        "standard": "MISRA C++:2008 adaptado — static_cast, llaves obligatorias, tipos fijos <cstdint>",
+        "rtos": "FreeRTOS — xTaskCreatePinnedToCore(), colas con xQueueCreate()",
+        "watchdog": "Include <esp_task_wdt.h> — esp_task_wdt_init() + esp_task_wdt_add()"
+      },
+      "pins": {
+        "_nota": "Verificar conflictos con USB/JTAG en ESP32-S3 antes de asignar pines.",
+        "PIN_POT_OP":   "GPIO1  — ADC1_CH0 (verificar en tu variante de placa)",
+        "PIN_POT_FEED": "GPIO2  — ADC1_CH1 (verificar en tu variante de placa)",
+        "PIN_IS_SENSE": "GPIO3  — ADC1_CH2 (verificar en tu variante de placa)",
+        "PIN_EN":       "GPIO4  — Enable puente H",
+        "PIN_L_PWM":    "GPIO5  — LEDC canal 0",
+        "PIN_R_PWM":    "GPIO6  — LEDC canal 1"
+      },
+      "peripherals": {
+        "_instruccion": "El orquestador completa estos campos al iniciar 'nuevo proyecto'.",
+        "motor_driver": "",
+        "motor_type": "",
+        "pwm_peripheral": "LEDC (LED Control) — reemplaza analogWrite()",
+        "adc_note": "ADC2 no disponible con WiFi activo — usar ADC1 siempre.",
+        "machine_description": ""
+      },
+      "migration_notes_from_nano": [
+        "analogWrite() → ledcWrite() con ledcSetup() + ledcAttachPin()",
+        "EEPROM → NVS: nvs_flash_init(), nvs_open(), nvs_set_i16()",
+        "<avr/wdt.h> → <esp_task_wdt.h>",
+        "Timer1 (TCCR1A/B) → esp_timer o LEDC timer",
+        "loop() bloqueante → task de FreeRTOS en Core 1",
+        "Serial.print() → ESP_LOGI() / ESP_LOGE() con log tags"
+      ],
+      "test_framework": "ESP-IDF Unity (idf_component_register con TEST_COMPONENTS)",
+      "src_dir": "main/",
+      "test_dir": "test/"
+    }
+  }
+}

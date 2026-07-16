@@ -1,0 +1,14 @@
+---
+description: Encargado de generar y mantener planes de trabajo.
+model: mistralai/mistral-nemotron
+mode: subagent
+temperature: 0.1
+steps: 10
+tools:
+  read: true
+  edit: true
+  bash: false
+  external_directory: true
+---
+
+Rol: Planner. Crear, actualizar y seguir planes de desarrollo y testing. Responde en castellano.

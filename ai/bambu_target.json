@@ -1,0 +1,105 @@
+{
+  "_comment": "CONFIGURACIÓN BAMBU STUDIO — Bambu Lab A1 + AMS Lite",
+  "domain": "bambu_studio",
+  "printer_model": "Bambu Lab A1",
+  "ams": "AMS Lite (4 slots)",
+  "firmware": "Bambu Studio / Orca Slicer compatible",
+  "profile_format": "Bambu Studio .json / .cfg / filament_preset",
+  "build_plate": "PEI flexible / Engineering plate / High-temp plate",
+  "nozzle": {
+    "diameter_mm": [0.4, 0.6, 0.8],
+    "max_temp_c": 300,
+    "stock": 0.4
+  },
+  "bed": {
+    "max_temp_c": 100,
+    "shape": "rectangular 256x256mm",
+    "stock_temp_c": 60
+  },
+  "ams_lite": {
+    "max_filaments": 4,
+    "compatible_diameters_mm": [1.75],
+    "max_temp_c": 300,
+    "flushing_volume_default_mm3": 120,
+    "spool_holder": "external spool holder for non-AMS",
+    "humidity_control": "silica gel in dry box recommended"
+  },
+  "safe_limits": {
+    "nozzle_max_c": 300,
+    "bed_max_c": 100,
+    "chamber_max_c": 60,
+    "max_speed_mms": 500,
+    "max_volumetric_flow_mm3s": 32,
+    "retraction_min_mm": 0.4,
+    "retraction_max_mm": 2.0,
+    "max_acceleration_mms2": 10000
+  },
+  "filament_common": {
+    "PLA": {
+      "nozzle_c": "190-230",
+      "bed_c": "45-60",
+      "cooling": "100% fan",
+      "retraction_mm": 0.8,
+      "retraction_speed_mms": 30,
+      "max_volumetric_mm3s": 15
+    },
+    "PETG": {
+      "nozzle_c": "230-260",
+      "bed_c": "70-85",
+      "cooling": "30-50% fan",
+      "retraction_mm": 0.6,
+      "retraction_speed_mms": 25,
+      "max_volumetric_mm3s": 12,
+      "drying_recommended": "65°C / 6h"
+    },
+    "TPU": {
+      "nozzle_c": "210-240",
+      "bed_c": "40-60",
+      "cooling": "0-20% fan",
+      "retraction_mm": 0.4,
+      "retraction_speed_mms": 10,
+      "max_volumetric_mm3s": 5,
+      "drying_recommended": "50°C / 8h"
+    },
+    "ABS": {
+      "nozzle_c": "240-270",
+      "bed_c": "85-100",
+      "cooling": "0-20% fan",
+      "retraction_mm": 0.7,
+      "retraction_speed_mms": 40,
+      "max_volumetric_mm3s": 10,
+      "enclosure_needed": "strongly recommended"
+    },
+    "PA-CF": {
+      "nozzle_c": "270-300",
+      "bed_c": "80-100",
+      "cooling": "0-20% fan",
+      "retraction_mm": 0.6,
+      "retraction_speed_mms": 20,
+      "max_volumetric_mm3s": 8,
+      "drying_mandatory": "80°C / 12h",
+      "hardened_nozzle": "mandatory"
+    }
+  },
+  "calibration_routines": {
+    "temp_tower": {"range_c": "180-230", "step_c": 5, "z_offset_mm": 5},
+    "retraction_test": {"range_mm": "0.2-2.0", "step_mm": 0.2},
+    "flow_rate": {"range_pct": "85-115", "step_pct": 5},
+    "pa_pattern": "line method / tower method",
+    "max_flow_rate": "volumetric limit test"
+  },
+  "profile_rules": {
+    "first_layer": "0.2mm height, 105% flow, 20mm/s speed",
+    "standard_layer_height_mm": [0.08, 0.12, 0.16, 0.20, 0.28, 0.32],
+    "wall_count_recommended": [2, 3, 4],
+    "infill_default_pct": 15,
+    "support_default": "tree (auto) / snug",
+    "overhang_threshold_deg": 55
+  },
+  "post_processing_rules": [
+    "Revisar flushing volumes en AMS Lite para evitar mezcla de colores",
+    "Verificar drying de filamentos higroscópicos antes de imprimir",
+    "Confirmar que el filamento externo (no AMS) esté seco",
+    "No exceder 12h continuas sin revisar estado del hotend"
+  ]
+}

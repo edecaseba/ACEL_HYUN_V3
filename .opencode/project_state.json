@@ -1,0 +1,88 @@
+{
+  "project_state_version": 1,
+  "first_run_complete": true,
+  "project_type": "existente",
+  "last_session_date": "2026-07-16T12:45:00Z",
+  "session_count": 10,
+  "audit_results": {
+    "total_agents": 15,
+    "activos": [
+      "build",
+      "compaction",
+      "calibrator",
+      "coder",
+      "documenter",
+      "explore",
+      "meta-orquestador",
+      "planner",
+      "reviewer",
+      "slicer",
+      "tester",
+      "general",
+      "plan",
+      "summary",
+      "title"
+    ],
+    "corregidos": [
+      "build",
+      "compaction",
+      "calibrator",
+      "coder",
+      "documenter",
+      "explore",
+      "meta-orquestador",
+      "planner",
+      "reviewer",
+      "slicer",
+      "tester",
+      "general",
+      "plan",
+      "summary",
+      "title"
+    ],
+    "archivados": [
+      "calibrator",
+      "coder",
+      "documenter",
+      "explore",
+      "planner",
+      "reviewer",
+      "slicer",
+      "tester"
+    ]
+  },
+  "confirmed_by_user": {
+    "audit": true,
+    "corrections_applied": true,
+    "interview_complete": true
+  },
+  "snapshot": {
+    "agent_files": [],
+    "skill_dirs": [
+      ".opencode/skills/skill-iso-safety",
+      ".opencode/skills/validate_orchestration"
+    ],
+    "key_manifests": {
+      "opencode.json": "2026-07-16 12:03:24.000000000 -0300",
+      "AGENTS.md": "2026-07-15 14:42:00.000000000 -0300",
+      "opencode": {
+        "json": "2026-07-16 12:03:24.000000000 -0300"
+      }
+    },
+    "git_last_commit": "acfbc90d51fea26fc775516710760e6483b66653"
+  },
+  "pipeline": {
+    "ultimo_agente_ejecutado": "fw-coder",
+    "ultimo_handoff": "Auto-tuning PID robusto v2.0.21"
+  },
+  "session_log_path": ".opencode/session_log.md"
+}
+    },
+    "git_last_commit": "acfbc90d51fea26fc775516710760e6483b66653"
+  },
+  "pipeline": {
+    "ultimo_agente_ejecutado": "fw-coder",
+    "ultimo_handoff": "Fix serial command processing - timeout 5ms all modes"
+  },
+  "session_log_path": ".opencode/session_log.md"
+}
