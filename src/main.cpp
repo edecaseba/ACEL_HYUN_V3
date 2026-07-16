@@ -134,7 +134,7 @@ enum class TunePhase : uint8_t {
 
 struct TuneContext {
     TunePhase phase;
-    int16_t   targetPos;      // Posición objetivo actual (mMin o mMax)
+    int16_t   targetPos;
     uint32_t  phaseStartMs;
     uint32_t  lastSwitchUs;
     uint32_t  firstSwitchUs;
@@ -144,10 +144,12 @@ struct TuneContext {
     uint8_t   cycleCount;
     float     currentPeak;
     float     currentValley;
-    bool      movingToMax;    // true = hacia mMax, false = hacia mMin
+    bool      movingToMax;
     float     Tu;
     float     Ku;
     uint32_t  lastProgressMs;
+    int16_t   lastPos;          // Para detectar inversión de dirección
+    uint32_t  lastImprovementMs; // Tiempo sin mejorar posición
 };
 static TuneContext tuneCtx;
 
@@ -568,6 +570,8 @@ static void tickTuning() {
                 tuneCtx.currentPeak = -1000.0f;
                 tuneCtx.currentValley = 1000.0f;
                 tuneCtx.lastProgressMs = nowMs;
+                tuneCtx.lastPos = posicion;
+                tuneCtx.lastImprovementMs = nowMs;
                 // Reset dead-time y fault para permitir oscilación libre
                 deadTimeActive = false;
                 deadTimeUntil = 0;
@@ -595,22 +599,28 @@ static void tickTuning() {
             if (nowMs - tuneCtx.lastProgressMs >= TUNE_PROGRESS_INTERVAL_MS) {
                 tuneCtx.lastProgressMs = nowMs;
                 Serial.print(F("TUNE: pos=")); Serial.print(posicion);
-                Serial.print(F(" target=")); Serial.print(tuneCtx.movingToMax ? 100 : 0);
+                Serial.print(F(" dir=")); Serial.print(tuneCtx.movingToMax ? F("->mMax") : F("->mMin"));
                 Serial.print(F(" ciclos=")); Serial.println(tuneCtx.cycleCount);
             }
 
-            // Verificar si llegó al tope objetivo
-            bool llegoAlTope = false;
+            // Detectar inversión de dirección: si la posición deja de mejorar en la dirección actual
+            bool mejorando = false;
             if (tuneCtx.movingToMax) {
-                if (posicion >= 95) llegoAlTope = true;
+                if (posicion > tuneCtx.lastPos) mejorando = true;
             } else {
-                if (posicion <= 5) llegoAlTope = true;
+                if (posicion < tuneCtx.lastPos) mejorando = true;
             }
 
-            if (llegoAlTope) {
-                // Cambiar dirección
-                registrarCruce(posicion);
-                tuneCtx.movingToMax = !tuneCtx.movingToMax;
+            if (mejorando) {
+                tuneCtx.lastPos = posicion;
+                tuneCtx.lastImprovementMs = nowMs;
+            } else {
+                // No mejora: si pasaron 2s sin mejorar, cambiar dirección
+                if (nowMs - tuneCtx.lastImprovementMs > 2000) {
+                    registrarCruce(posicion);
+                    tuneCtx.movingToMax = !tuneCtx.movingToMax;
+                    tuneCtx.lastImprovementMs = nowMs;
+                }
             }
 
             // Mover hacia el tope actual
@@ -629,7 +639,7 @@ static void tickTuning() {
                 integralAccumulator = 0.0f;
                 errorAnterior = 0;
                 asentado = false;
-                tuningLimitCycle = false;  // Reactiva dead-time
+                tuningLimitCycle = false;
                 digitalWrite(PIN_EN, HIGH);
             }
             break;
