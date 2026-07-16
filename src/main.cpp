@@ -125,7 +125,7 @@ static CalState calState = CalState::IDLE;
 enum class TunePhase : uint8_t {
     IDLE,
     INIT_MOVE,
-    RELAY_ACTIVE,
+    LIMIT_CYCLE,      // Bang-bang entre mMin y mMax
     CYCLES_DONE,
     CALCULATE,
     SAVE
@@ -133,7 +133,7 @@ enum class TunePhase : uint8_t {
 
 struct TuneContext {
     TunePhase phase;
-    int16_t   setpointMid;
+    int16_t   targetPos;      // Posición objetivo actual (mMin o mMax)
     uint32_t  phaseStartMs;
     uint32_t  lastSwitchUs;
     uint32_t  firstSwitchUs;
@@ -143,7 +143,7 @@ struct TuneContext {
     uint8_t   cycleCount;
     float     currentPeak;
     float     currentValley;
-    bool      relayFwd;
+    bool      movingToMax;    // true = hacia mMax, false = hacia mMin
     float     Tu;
     float     Ku;
     uint32_t  lastProgressMs;
@@ -525,15 +525,12 @@ static void iniciarTuning() {
     tuneCtx.Ku = 0.0f;
     tuneCtx.firstSwitchUs = 0;
     tuneCtx.lastProgressMs = 0;
+    tuneCtx.movingToMax = true;  // Empezar hacia mMax
 
-    // Setpoint en el centro real del rango calibrado
-    tuneCtx.setpointMid = static_cast<int16_t>((cfg.mMax + cfg.mMin) / 2);
-    tuneCtx.setpointMid = map(tuneCtx.setpointMid, cfg.mMin, cfg.mMax, 0, 100);
-    tuneCtx.setpointMid = constrain(tuneCtx.setpointMid, 10, 90);
-
-    Serial.println(F("\n=== AUTO-TUNING PID (RELAY) ==="));
-    Serial.print(F("Setpoint: ")); Serial.println(tuneCtx.setpointMid);
-    Serial.println(F("Moviendo a posicion media..."));
+    Serial.println(F("\n=== AUTO-TUNING PID (LIMIT CYCLE) ==="));
+    Serial.print(F("Rango: mMin=")); Serial.print(cfg.mMin);
+    Serial.print(F(" mMax=")); Serial.println(cfg.mMax);
+    Serial.println(F("Moviendo a tope ACELERACION (mMax)..."));
 }
 
 static void tickTuning() {
@@ -543,13 +540,11 @@ static void tickTuning() {
     int16_t posicion = map(rawPos, cfg.mMin, cfg.mMax, 0, 100);
     posicion = constrain(posicion, 0, 100);
 
-    int16_t error = static_cast<int16_t>(tuneCtx.setpointMid - posicion);
-
     // Progreso cada 5s
-    if (tuneCtx.phase == TunePhase::RELAY_ACTIVE && nowMs - tuneCtx.lastProgressMs >= TUNE_PROGRESS_INTERVAL_MS) {
+    if (tuneCtx.phase == TunePhase::LIMIT_CYCLE && nowMs - tuneCtx.lastProgressMs >= TUNE_PROGRESS_INTERVAL_MS) {
         tuneCtx.lastProgressMs = nowMs;
         Serial.print(F("TUNE: pos=")); Serial.print(posicion);
-        Serial.print(F(" err=")); Serial.print(error);
+        Serial.print(F(" dir=")); Serial.print(tuneCtx.movingToMax ? F("->mMax") : F("->mMin"));
         Serial.print(F(" ciclos=")); Serial.println(tuneCtx.cycleCount);
     }
 
@@ -558,16 +553,14 @@ static void tickTuning() {
             break;
 
         case TunePhase::INIT_MOVE:
-            // Mover hacia el setpoint adaptativo
-            if (posicion < tuneCtx.setpointMid - 10) {
-                mover(TUNE_PWM, true);
-            } else if (posicion > tuneCtx.setpointMid + 10) {
-                mover(TUNE_PWM, false);
+            // Mover hacia mMax (tope ACELERACION) primero
+            if (posicion < 95) {
+                mover(TUNE_PWM, true);  // Hacia mMax
             } else {
                 detener();
-                tuneCtx.phase = TunePhase::RELAY_ACTIVE;
+                tuneCtx.phase = TunePhase::LIMIT_CYCLE;
                 tuneCtx.phaseStartMs = nowMs;
-                tuneCtx.relayFwd = true;
+                tuneCtx.movingToMax = false;  // Ahora hacia mMin
                 tuneCtx.lastSwitchUs = micros();
                 tuneCtx.currentPeak = -1000.0f;
                 tuneCtx.currentValley = 1000.0f;
@@ -578,40 +571,49 @@ static void tickTuning() {
                 firstMovementAfterStop = true;
                 sysState.isFaulted = false;
                 digitalWrite(PIN_EN, HIGH);
-                Serial.println(F("TUNE: Relay iniciado. Observe oscilacion..."));
+                Serial.println(F("TUNE: En mMax. Iniciando ciclo limite mMax<->mMin..."));
             }
 
             if (nowMs - tuneCtx.phaseStartMs > TUNE_INIT_TIMEOUT_MS) {
                 detener();
-                Serial.println(F("TUNE: Timeout alcanzando posicion media. Abortando."));
+                Serial.println(F("TUNE: Timeout alcanzando mMax. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
             }
             break;
 
-        case TunePhase::RELAY_ACTIVE: {
-            bool deberiaFwd = (error > TUNE_RELAY_HYSTERESIS);
-            bool deberiaRev = (error < -TUNE_RELAY_HYSTERESIS);
+        case TunePhase::LIMIT_CYCLE: {
+            int16_t rawPos = static_cast<int16_t>(filterFeedback.filteredValue);
+            int16_t posicion = map(rawPos, cfg.mMin, cfg.mMax, 0, 100);
+            posicion = constrain(posicion, 0, 100);
 
-            if (deberiaFwd && !tuneCtx.relayFwd) {
-                registrarCruce(posicion);
-                tuneCtx.relayFwd = true;
-            } else if (deberiaRev && tuneCtx.relayFwd) {
-                registrarCruce(posicion);
-                tuneCtx.relayFwd = false;
+            // Progreso cada 5s
+            if (nowMs - tuneCtx.lastProgressMs >= TUNE_PROGRESS_INTERVAL_MS) {
+                tuneCtx.lastProgressMs = nowMs;
+                Serial.print(F("TUNE: pos=")); Serial.print(posicion);
+                Serial.print(F(" target=")); Serial.print(tuneCtx.movingToMax ? 100 : 0);
+                Serial.print(F(" ciclos=")); Serial.println(tuneCtx.cycleCount);
             }
 
-            if (tuneCtx.relayFwd) {
+            // Verificar si llegó al tope objetivo
+            bool llegoAlTope = false;
+            if (tuneCtx.movingToMax) {
+                if (posicion >= 95) llegoAlTope = true;
+            } else {
+                if (posicion <= 5) llegoAlTope = true;
+            }
+
+            if (llegoAlTope) {
+                // Cambiar dirección
+                registrarCruce(posicion);
+                tuneCtx.movingToMax = !tuneCtx.movingToMax;
+            }
+
+            // Mover hacia el tope actual
+            if (tuneCtx.movingToMax) {
                 mover(TUNE_PWM, true);
             } else {
                 mover(TUNE_PWM, false);
-            }
-
-            if (posicion > tuneCtx.currentPeak) {
-                tuneCtx.currentPeak = static_cast<float>(posicion);
-            }
-            if (posicion < tuneCtx.currentValley) {
-                tuneCtx.currentValley = static_cast<float>(posicion);
             }
 
             if (nowMs - tuneCtx.phaseStartMs > TUNE_TIMEOUT_MS) {
@@ -619,7 +621,6 @@ static void tickTuning() {
                 Serial.println(F("TUNE: Timeout 90s. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
-                // Reset completo tras abort
                 sysState.isFaulted = false;
                 integralAccumulator = 0.0f;
                 errorAnterior = 0;
@@ -716,12 +717,6 @@ static void registrarCruce(int16_t posicion) {
     if (tuneCtx.firstSwitchUs == 0) {
         tuneCtx.firstSwitchUs = nowUs;
         tuneCtx.lastSwitchUs = nowUs;
-
-        float amp = tuneCtx.currentPeak - tuneCtx.currentValley;
-        if (amp > 1.0f && tuneCtx.cycleCount < 8) {
-            tuneCtx.peaks[tuneCtx.cycleCount] = tuneCtx.currentPeak;
-            tuneCtx.valleys[tuneCtx.cycleCount] = tuneCtx.currentValley;
-        }
         tuneCtx.currentPeak = -1000.0f;
         tuneCtx.currentValley = 1000.0f;
         return;
@@ -744,7 +739,7 @@ static void registrarCruce(int16_t posicion) {
     tuneCtx.currentPeak = -1000.0f;
     tuneCtx.currentValley = 1000.0f;
 
-    if (tuneCtx.cycleCount >= 6) {
+    if (tuneCtx.cycleCount >= TUNE_MIN_CYCLES) {
         tuneCtx.phase = TunePhase::CYCLES_DONE;
         Serial.println(F("\nTUNE: Ciclos suficientes."));
     }
