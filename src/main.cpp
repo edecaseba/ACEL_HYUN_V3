@@ -544,9 +544,10 @@ static void tickTuning() {
             break;
 
         case TunePhase::INIT_MOVE:
-            if (posicion < 40) {
+            // Mover hacia el setpoint adaptativo
+            if (posicion < tuneCtx.setpointMid - 10) {
                 mover(TUNE_PWM, true);
-            } else if (posicion > 60) {
+            } else if (posicion > tuneCtx.setpointMid + 10) {
                 mover(TUNE_PWM, false);
             } else {
                 detener();
@@ -557,6 +558,12 @@ static void tickTuning() {
                 tuneCtx.currentPeak = -1000.0f;
                 tuneCtx.currentValley = 1000.0f;
                 tuneCtx.lastProgressMs = nowMs;
+                // Reset dead-time y fault para permitir oscilación libre
+                deadTimeActive = false;
+                deadTimeUntil = 0;
+                firstMovementAfterStop = true;
+                sysState.isFaulted = false;
+                digitalWrite(PIN_EN, HIGH);
                 Serial.println(F("TUNE: Relay iniciado. Observe oscilacion..."));
             }
 
@@ -598,6 +605,12 @@ static void tickTuning() {
                 Serial.println(F("TUNE: Timeout 90s. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
+                // Reset completo tras abort
+                sysState.isFaulted = false;
+                integralAccumulator = 0.0f;
+                errorAnterior = 0;
+                asentado = false;
+                digitalWrite(PIN_EN, HIGH);
             }
             break;
         }
