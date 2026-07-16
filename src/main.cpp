@@ -7,7 +7,6 @@
 #include <EEPROM.h>
 #include "overcurrent.h"
 
-// Safe EEPROM access with bounds checking
 template<typename T>
 bool eepromPutSafe(int addr, const T& value) {
     if (addr < 0 || addr + sizeof(T) > EEPROM.length()) return false;
@@ -22,9 +21,13 @@ bool eepromGetSafe(int addr, T& value) {
     return true;
 }
 
-// ==========================================
-// --- Hardware Invariants: Topología BTS7960 ---
-// ==========================================
+static void ucase(char* s) {
+    while (*s) {
+        if (*s >= 'a' && *s <= 'z') *s = static_cast<char>(*s - ('a' - 'A'));
+        ++s;
+    }
+}
+
 constexpr uint8_t pinPotOp     = A0;
 constexpr uint8_t pinPotFeed   = A1;
 constexpr uint8_t PIN_IS_SENSE = A2;
@@ -34,10 +37,16 @@ constexpr uint8_t PIN_R_PWM    = 10;
 constexpr uint8_t PIN_L_PWM    = 9;
 
 constexpr uint16_t DEAD_TIME_MS   = 150;
-constexpr uint16_t STALL_CURRENT_ADC = 750;
+constexpr uint16_t STALL_CURRENT_ADC = 950;
 
-constexpr uint8_t VEL_TEST       = 140;   // Velocidad para calibración/test
-constexpr uint8_t TUNE_PWM       = 140;   // Velocidad para relay tuning
+constexpr uint8_t VEL_TEST       = 140;
+constexpr uint8_t TUNE_PWM       = 180;
+
+constexpr uint32_t TUNE_TIMEOUT_MS       = 90000;
+constexpr uint32_t TUNE_INIT_TIMEOUT_MS  = 10000;
+constexpr int16_t  TUNE_RELAY_HYSTERESIS = 3;
+constexpr uint8_t  TUNE_MIN_CYCLES       = 4;
+constexpr uint32_t TUNE_PROGRESS_INTERVAL_MS = 5000;
 
 constexpr uint16_t TIEMPO_ASENTAMIENTO_MS = 100;
 constexpr uint8_t  UMBRAL_REACTIVACION    = 6;
@@ -45,10 +54,9 @@ constexpr uint8_t  UMBRAL_REACTIVACION    = 6;
 static void configurarPinesSinUso()
 {
     const uint8_t pinesPullUp[] = {2,3,4,5,6,7,11,12,13};
-    for (uint8_t p : pinesPullUp) {
-        pinMode(p, INPUT_PULLUP);
+    for (uint8_t i = 0; i < sizeof(pinesPullUp); ++i) {
+        pinMode(pinesPullUp[i], INPUT_PULLUP);
     }
-    // Ensure PWM pins start low (will be reconfigured later)
     digitalWrite(PIN_L_PWM, LOW);
     digitalWrite(PIN_R_PWM, LOW);
     digitalWrite(PIN_EN, LOW);
@@ -59,9 +67,6 @@ constexpr float    DEFAULT_KP     = 2.0f;
 constexpr float    DEFAULT_KI     = 0.1f;
 constexpr float    DEFAULT_KD     = 0.5f;
 
-// ==========================================
-// --- Filtro EMA (Exponential Moving Average) ---
-// ==========================================
 struct EMAFilter {
     float alpha;
     float filteredValue;
@@ -75,33 +80,27 @@ struct EMAFilter {
     }
 };
 
-constexpr float ALPHA_PEDAL    = 0.15f;
-constexpr float ALPHA_FEEDBACK = 0.20f;
-constexpr float ALPHA_CURRENT  = 0.30f;
+constexpr float ALPHA_PEDAL    = 0.75f;
+constexpr float ALPHA_FEEDBACK = 0.80f;
+constexpr float ALPHA_CURRENT  = 0.85f;
 
 static EMAFilter filterPedal    = { ALPHA_PEDAL, 0.0f };
 static EMAFilter filterFeedback = { ALPHA_FEEDBACK, 0.0f };
 static EMAFilter filterCurrent  = { ALPHA_CURRENT, 0.0f };
 
-// ==========================================
-// --- Config / EEPROM ---
-// ==========================================
 struct Config {
-    int16_t pMin;        // pedal mínimo (ralentí)
-    int16_t pMax;        // pedal máximo (full RPM)
-    int16_t mMin;        // feedback motor mínimo (desacelera)
-    int16_t mMax;        // feedback motor máximo (acelera)
-    bool    accelIsFwd;  // true: R_PWM = acelera, false: L_PWM = acelera
-    float   kp;          // ganancia proporcional (tuneada)
-    float   ki;          // ganancia integral
-    float   kd;          // ganancia derivativa
-    int16_t cv;          // magic number de validación
+    int16_t pMin;
+    int16_t pMax;
+    int16_t mMin;
+    int16_t mMax;
+    bool    accelIsFwd;
+    float   kp;
+    float   ki;
+    float   kd;
+    int16_t cv;
 };
 static Config cfg;
 
-// ==========================================
-// --- Modos del sistema ---
-// ==========================================
 enum class SystemMode : uint8_t {
     OPERATION,
     CALIBRATION,
@@ -109,61 +108,49 @@ enum class SystemMode : uint8_t {
 };
 static SystemMode sysMode = SystemMode::OPERATION;
 
-// ==========================================
-// --- Máquina de Calibración Interactiva ---
-// ==========================================
 enum class CalState : uint8_t {
     IDLE,
-    PEDAL_MIN_WAIT,    // esperando OK del pedal en ralentí
-    PEDAL_MIN_READ,    // lee y guarda pMin
-    PEDAL_MAX_WAIT,    // esperando OK del pedal a fondo
-    PEDAL_MAX_READ,    // lee y guarda pMax
-    DIR_TEST,          // modo test FWD/REV/STOP
-    DIR_SET,           // espera DIR FWD ACEL o DIR REV ACEL
-    LIMIT_ACCEL,       // espera MOVEFWD / SETMAX
-    LIMIT_DECEL,       // espera MOVEREV / SETMIN
-    SAVE_PROMPT        // espera SAVE o TUNE
+    PEDAL_MIN_WAIT,
+    PEDAL_MIN_READ,
+    PEDAL_MAX_WAIT,
+    PEDAL_MAX_READ,
+    DIR_TEST,
+    DIR_SET,
+    LIMIT_ACCEL,
+    LIMIT_DECEL,
+    SAVE_PROMPT
 };
 static CalState calState = CalState::IDLE;
 
-// ==========================================
-// --- Máquina de Relay Auto-tuning ---
-// ==========================================
 enum class TunePhase : uint8_t {
     IDLE,
-    INIT_MOVE,       // mover a posición media
-    RELAY_ACTIVE,    // oscilación relay activa
-    CYCLES_DONE,     // suficientes ciclos, detener
-    CALCULATE,       // calcular KP/KI/KD
-    SAVE             // guardar en EEPROM
+    INIT_MOVE,
+    RELAY_ACTIVE,
+    CYCLES_DONE,
+    CALCULATE,
+    SAVE
 };
 
 struct TuneContext {
     TunePhase phase;
-    int16_t   setpointMid;     // 50% en unidades de posición
+    int16_t   setpointMid;
     uint32_t  phaseStartMs;
-    uint32_t  lastSwitchUs;    // micros del último cruce
-    uint32_t  firstSwitchUs;   // micros del primer cruce
-    float     periods[8];      // períodos medidos (ring buffer)
-    float     peaks[8];        // picos máximos (ring buffer)
-    float     valleys[8];      // valles mínimos (ring buffer)
+    uint32_t  lastSwitchUs;
+    uint32_t  firstSwitchUs;
+    float     periods[8];
+    float     peaks[8];
+    float     valleys[8];
     uint8_t   cycleCount;
     float     currentPeak;
     float     currentValley;
-    bool      relayFwd;        // true = moviendo hacia adelante
+    bool      relayFwd;
     float     Tu;
     float     Ku;
+    uint32_t  lastProgressMs;
 };
 static TuneContext tuneCtx;
 
-// ==========================================
-// --- Estado del actuador ---
-// ==========================================
-enum class ActuatorDirection : uint8_t {
-    STOP,
-    FORWARD,
-    REVERSE
-};
+#include "motor_types.h"
 
 struct MotorState {
     ActuatorDirection currentDirection;
@@ -171,12 +158,13 @@ struct MotorState {
 };
 static MotorState sysState = { ActuatorDirection::STOP, false };
 
+ActuatorDirection sysState_currentDirection = ActuatorDirection::STOP;
+
 static uint32_t deadTimeUntil  = 0;
 static bool     deadTimeActive = false;
+static bool     lastUsarR_PWM  = true;
+static bool     firstMovementAfterStop = true;
 
-// ==========================================
-// --- Estado de asentamiento (anti-ronroneo) ---
-// ==========================================
 static bool     asentado           = false;
 static uint32_t asentadoTimer      = 0;
 static int16_t  errorAnterior      = 0;
@@ -186,15 +174,9 @@ static uint32_t lastPidTime        = 0;
 static uint32_t lastStallCheck = 0;
 constexpr uint16_t STALL_CHECK_INTERVAL_MS = 50;
 
-// ==========================================
-// --- Buffer de comandos seriales ---
-// ==========================================
 static char cmdBuffer[24];
 static uint8_t cmdIndex = 0;
 
-// ==========================================
-// --- Prototipos adelantados ---
-// ==========================================
 static void detener();
 static void mover(uint8_t vel, bool acelera);
 static void iniciarCalibracion();
@@ -209,15 +191,24 @@ static void comandoSAVE();
 static void comandoDIR(const char* arg);
 static void registrarCruce(int16_t posicion);
 
-// ==========================================
-// --- Capa de Potencia (BTS7960) ---
-// ==========================================
-
 static void detener() {
     digitalWrite(PIN_R_PWM, LOW);
     digitalWrite(PIN_L_PWM, LOW);
     sysState.currentDirection = ActuatorDirection::STOP;
+    sysState_currentDirection = ActuatorDirection::STOP;
+    deadTimeActive = false;
+    deadTimeUntil = 0;
+    firstMovementAfterStop = true;
 }
+
+#ifdef UNITY_TEST
+bool test_getDeadTimeActive(void) { return deadTimeActive; }
+uint32_t test_getDeadTimeUntil(void) { return deadTimeUntil; }
+void test_setDeadTimeActive(bool v) { deadTimeActive = v; }
+void test_setDeadTimeUntil(uint32_t v) { deadTimeUntil = v; }
+void test_setMockMillis(uint32_t v) { mock_millis_value = v; }
+#endif
+
 void safeState() {
     detener();
     digitalWrite(PIN_EN, LOW);
@@ -234,8 +225,11 @@ void initMotorHardware() {
     pinMode(PIN_L_PWM, OUTPUT);
     pinMode(PIN_IS_SENSE, INPUT);
 
-    TCCR1A = static_cast<uint8_t>(1 << WGM10);
-    TCCR1B = static_cast<uint8_t>(1 << CS10);
+    // Fast PWM 10-bit, TOP=ICR1=799, prescaler=1 -> 16MHz/(800*1) = 20 kHz
+    // WGM13:10 = 0b1111 (Fast PWM, TOP=ICR1)
+    TCCR1A = (TCCR1A & 0xF0) | static_cast<uint8_t>((1 << WGM11) | (1 << WGM10));
+    TCCR1B = (TCCR1B & 0xF0) | static_cast<uint8_t>((1 << WGM13) | (1 << WGM12) | (1 << CS10));
+    ICR1 = 799;
 
     digitalWrite(PIN_EN, HIGH);
 }
@@ -243,15 +237,13 @@ void initMotorHardware() {
 void mover(uint8_t vel, bool acelera) {
     if (sysState.isFaulted) { return; }
 
-    // acelera = true  → necesita aumentar posición (setpoint > actual)
-    // acelera = false → necesita disminuir posición (setpoint < actual)
     bool usarR_PWM = acelera ? cfg.accelIsFwd : !cfg.accelIsFwd;
+    ActuatorDirection targetDir = usarR_PWM ? ActuatorDirection::FORWARD : ActuatorDirection::REVERSE;
 
-    ActuatorDirection targetDir = usarR_PWM ? ActuatorDirection::FORWARD
-                                             : ActuatorDirection::REVERSE;
-
-    // Dead-time al cambiar dirección
-    if (targetDir != sysState.currentDirection && sysState.currentDirection != ActuatorDirection::STOP) {
+    // Saltar dead-time en primer movimiento tras detenerse (ambos PWM en LOW = seguro)
+    if (firstMovementAfterStop) {
+        firstMovementAfterStop = false;
+    } else if (usarR_PWM != lastUsarR_PWM) {
         if (!deadTimeActive) {
             detener();
             deadTimeUntil = millis() + DEAD_TIME_MS;
@@ -266,6 +258,8 @@ void mover(uint8_t vel, bool acelera) {
     }
 
     sysState.currentDirection = targetDir;
+    sysState_currentDirection = targetDir;
+    lastUsarR_PWM = usarR_PWM;
 
     if (usarR_PWM) {
         analogWrite(PIN_L_PWM, 0);
@@ -296,10 +290,6 @@ void monitorStallCurrent() {
     }
 }
 
-// ==========================================
-// --- Calibración Interactiva ---
-// ==========================================
-
 static void iniciarCalibracion() {
     sysMode = SystemMode::CALIBRATION;
     sysState.isFaulted = false;
@@ -311,14 +301,10 @@ static void iniciarCalibracion() {
 
     calState = CalState::PEDAL_MIN_WAIT;
     Serial.println(F("\n=== CALIBRACION INTERACTIVA ==="));
-    Serial.println(F("Paso 1/6: Coloque el acelerador en RALENTI (mínimo) y envíe OK"));
+    Serial.println(F("Paso 1/6: Coloque el acelerador en RALENTI (minimo) y envie OK"));
 }
 
 static void tickCalibration() {
-    // No se necesita lógica periódica — todo avanza por comandos seriales
-    // Los handlers de comandos cambian calState.
-    // Esta función existe por si en futuro se necesitan timeouts.
-
     switch (calState) {
         case CalState::IDLE:
         case CalState::PEDAL_MIN_WAIT:
@@ -335,7 +321,7 @@ static void tickCalibration() {
             Serial.print(F("pMin = ")); Serial.print(cfg.pMin);
             Serial.println(F(" guardado."));
             calState = CalState::PEDAL_MAX_WAIT;
-            Serial.println(F("Paso 2/6: Coloque el acelerador a MAXIMAS RPM y envíe OK"));
+            Serial.println(F("Paso 2/6: Coloque el acelerador a MAXIMAS RPM y envie OK"));
             break;
         }
 
@@ -344,16 +330,12 @@ static void tickCalibration() {
             Serial.print(F("pMax = ")); Serial.print(cfg.pMax);
             Serial.println(F(" guardado."));
             calState = CalState::DIR_TEST;
-            Serial.println(F("Paso 3/6: Use FWD/REV/STOP para probar dirección del motor."));
-            Serial.println(F("Luego envíe: DIR FWD ACEL  o  DIR REV ACEL"));
+            Serial.println(F("Paso 3/6: Use FWD/REV/STOP para probar direccion del motor."));
+            Serial.println(F("Luego envie: DIR FWD ACEL  o  DIR REV ACEL"));
             break;
         }
     }
 }
-
-// ==========================================
-// --- Handlers de comandos de calibración ---
-// ==========================================
 
 static void comandoOK() {
     if (sysMode != SystemMode::CALIBRATION) { return; }
@@ -366,7 +348,7 @@ static void comandoOK() {
             calState = CalState::PEDAL_MAX_READ;
             break;
         default:
-            Serial.println(F("OK no válido en este paso."));
+            Serial.println(F("OK no valido en este paso."));
             break;
     }
 }
@@ -374,24 +356,23 @@ static void comandoOK() {
 static void comandoSAVE() {
     if (sysMode != SystemMode::CALIBRATION) { return; }
     if (calState != CalState::SAVE_PROMPT) {
-        Serial.println(F("SAVE no válido aquí. Complete todos los pasos."));
+        Serial.println(F("SAVE no valido aqui. Complete todos los pasos."));
         return;
     }
 
-    // Validar que los límites tengan sentido
     if (abs(static_cast<int>(cfg.mMax - cfg.mMin)) < 50) {
-        Serial.println(F("ERROR: Recorrido del actuador muy pequeño (<50). Recalibre."));
+        Serial.println(F("ERROR: Recorrido del actuador muy pequeno (<50). Recalibre."));
         return;
     }
     if (abs(static_cast<int>(cfg.pMax - cfg.pMin)) < 50) {
-        Serial.println(F("ERROR: Recorrido del pedal muy pequeño (<50). Recalibre."));
+        Serial.println(F("ERROR: Recorrido del pedal muy pequeno (<50). Recalibre."));
         return;
     }
 
     cfg.cv = MAGIC_NUMBER;
     if (!eepromPutSafe(0, cfg)) { Serial.println(F("EEPROM write failed!")); }
     Serial.println(F("=== CALIBRACION GUARDADA EN EEPROM ==="));
-    Serial.println(F("Envíe TUNE para auto-ajustar PID, o cambie a operación normal."));
+    Serial.println(F("Envie TUNE para auto-ajustar PID, o cambie a operacion normal."));
     sysMode = SystemMode::OPERATION;
     calState = CalState::IDLE;
 }
@@ -399,30 +380,28 @@ static void comandoSAVE() {
 static void comandoDIR(const char* arg) {
     if (sysMode != SystemMode::CALIBRATION) { return; }
     if (calState != CalState::DIR_TEST && calState != CalState::DIR_SET) {
-        Serial.println(F("DIR no válido aquí. Termine el test de dirección primero."));
+        Serial.println(F("DIR no valido aqui. Termine el test de direccion primero."));
         return;
     }
 
-    // arg apunta después depués de "DIR "
     if (strstr(arg, "FWD ACEL") != nullptr || strcmp(arg, "FWD") == 0) {
         cfg.accelIsFwd = true;
         calState = CalState::LIMIT_ACCEL;
-        Serial.println(F("Dirección: R_PWM ACELERA. Guardado."));
-        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleración."));
-        Serial.println(F("Cuando llegue, envíe SETMAX"));
+        Serial.println(F("Direccion: R_PWM ACELERA. Guardado."));
+        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleracion."));
+        Serial.println(F("Cuando llegue, envie SETMAX"));
     } else if (strstr(arg, "REV ACEL") != nullptr || strcmp(arg, "REV") == 0) {
         cfg.accelIsFwd = false;
         calState = CalState::LIMIT_ACCEL;
-        Serial.println(F("Dirección: L_PWM ACELERA. Guardado."));
-        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleración."));
-        Serial.println(F("Cuando llegue, envíe SETMAX"));
+        Serial.println(F("Direccion: L_PWM ACELERA. Guardado."));
+        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleracion."));
+        Serial.println(F("Cuando llegue, envie SETMAX"));
     } else {
         Serial.println(F("Use: DIR FWD ACEL  o  DIR REV ACEL"));
     }
 }
 
 static void procesarComandoCal() {
-    // FWD / REV / STOP durante test de dirección
     if (strcmp(cmdBuffer, "FWD") == 0) {
         if (calState == CalState::DIR_TEST) {
             mover(VEL_TEST, true);
@@ -447,18 +426,17 @@ static void procesarComandoCal() {
         return;
     }
 
-    // MOVEFWD / MOVEREV durante límites
     if (strcmp(cmdBuffer, "MOVEFWD") == 0) {
         if (calState == CalState::LIMIT_ACCEL || calState == CalState::LIMIT_DECEL) {
-            mover(VEL_TEST, (calState == CalState::LIMIT_ACCEL));
-            Serial.println(F("Moviendo hacia límite..."));
+            mover(VEL_TEST, true);
+            Serial.println(F("Moviendo hacia limite de aceleracion..."));
         }
         return;
     }
     if (strcmp(cmdBuffer, "MOVEREV") == 0) {
         if (calState == CalState::LIMIT_ACCEL || calState == CalState::LIMIT_DECEL) {
-            mover(VEL_TEST, (calState != CalState::LIMIT_ACCEL));
-            Serial.println(F("Moviendo hacia límite opuesto..."));
+            mover(VEL_TEST, false);
+            Serial.println(F("Moviendo hacia limite de desaceleracion..."));
         }
         return;
     }
@@ -470,10 +448,10 @@ static void procesarComandoCal() {
             Serial.print(F("mMax = ")); Serial.print(cfg.mMax);
             Serial.println(F(" guardado."));
             calState = CalState::LIMIT_DECEL;
-            Serial.println(F("Paso 5/6: Use MOVEREV para ir al tope de desaceleración."));
-            Serial.println(F("Cuando llegue, envíe SETMIN"));
+            Serial.println(F("Paso 5/6: Use MOVEREV para ir al tope de desaceleracion."));
+            Serial.println(F("Cuando llegue, envie SETMIN"));
         } else {
-            Serial.println(F("SETMAX no válido aquí."));
+            Serial.println(F("SETMAX no valido aqui."));
         }
         return;
     }
@@ -485,10 +463,10 @@ static void procesarComandoCal() {
             Serial.print(F("mMin = ")); Serial.print(cfg.mMin);
             Serial.println(F(" guardado."));
             calState = CalState::SAVE_PROMPT;
-            Serial.println(F("Paso 6/6: Envíe SAVE para guardar en EEPROM"));
+            Serial.println(F("Paso 6/6: Envie SAVE para guardar en EEPROM"));
             Serial.println(F("         o TUNE para auto-ajustar PID primero."));
         } else {
-            Serial.println(F("SETMIN no válido aquí."));
+            Serial.println(F("SETMIN no valido aqui."));
         }
         return;
     }
@@ -512,14 +490,9 @@ static void procesarComandoCal() {
     Serial.println(cmdBuffer);
 }
 
-// ==========================================
-// --- Relay Auto-tuning ---
-// ==========================================
-
 static void iniciarTuning() {
     if (sysMode == SystemMode::CALIBRATION) {
-        // Si venimos de calibración, guardar límites primero antes de tunear
-        cfg.cv = 0; // marca como no calibrado hasta que SAVE finalice
+        cfg.cv = 0;
     }
 
     sysMode = SystemMode::TUNING;
@@ -529,7 +502,6 @@ static void iniciarTuning() {
     asentado = false;
     detener();
 
-    // Inicializar contexto de tuning
     tuneCtx.phase = TunePhase::INIT_MOVE;
     tuneCtx.phaseStartMs = millis();
     tuneCtx.cycleCount = 0;
@@ -538,31 +510,40 @@ static void iniciarTuning() {
     tuneCtx.Tu = 0.0f;
     tuneCtx.Ku = 0.0f;
     tuneCtx.firstSwitchUs = 0;
+    tuneCtx.lastProgressMs = 0;
 
-    // Setpoint medio = 50%
-    tuneCtx.setpointMid = 50;
+    // Setpoint en el centro real del rango calibrado
+    tuneCtx.setpointMid = static_cast<int16_t>((cfg.mMax + cfg.mMin) / 2);
+    tuneCtx.setpointMid = map(tuneCtx.setpointMid, cfg.mMin, cfg.mMax, 0, 100);
+    tuneCtx.setpointMid = constrain(tuneCtx.setpointMid, 10, 90);
 
     Serial.println(F("\n=== AUTO-TUNING PID (RELAY) ==="));
-    Serial.println(F("Moviendo a posición media..."));
+    Serial.print(F("Setpoint: ")); Serial.println(tuneCtx.setpointMid);
+    Serial.println(F("Moviendo a posicion media..."));
 }
 
 static void tickTuning() {
     uint32_t nowMs = millis();
 
-    // Mapear feedback a 0-100%
     int16_t rawPos = static_cast<int16_t>(filterFeedback.filteredValue);
     int16_t posicion = map(rawPos, cfg.mMin, cfg.mMax, 0, 100);
     posicion = constrain(posicion, 0, 100);
 
-    // Calcular error respecto al setpoint medio
     int16_t error = static_cast<int16_t>(tuneCtx.setpointMid - posicion);
+
+    // Progreso cada 5s
+    if (tuneCtx.phase == TunePhase::RELAY_ACTIVE && nowMs - tuneCtx.lastProgressMs >= TUNE_PROGRESS_INTERVAL_MS) {
+        tuneCtx.lastProgressMs = nowMs;
+        Serial.print(F("TUNE: pos=")); Serial.print(posicion);
+        Serial.print(F(" err=")); Serial.print(error);
+        Serial.print(F(" ciclos=")); Serial.println(tuneCtx.cycleCount);
+    }
 
     switch (tuneCtx.phase) {
         case TunePhase::IDLE:
             break;
 
         case TunePhase::INIT_MOVE:
-            // Mover en dirección de aceleración para alcanzar ~50%
             if (posicion < 40) {
                 mover(TUNE_PWM, true);
             } else if (posicion > 60) {
@@ -575,25 +556,23 @@ static void tickTuning() {
                 tuneCtx.lastSwitchUs = micros();
                 tuneCtx.currentPeak = -1000.0f;
                 tuneCtx.currentValley = 1000.0f;
-                Serial.println(F("TUNE: Relay iniciado. Observe oscilación..."));
+                tuneCtx.lastProgressMs = nowMs;
+                Serial.println(F("TUNE: Relay iniciado. Observe oscilacion..."));
             }
 
-            // Timeout: 5s para llegar a posición media
-            if (nowMs - tuneCtx.phaseStartMs > 5000) {
+            if (nowMs - tuneCtx.phaseStartMs > TUNE_INIT_TIMEOUT_MS) {
                 detener();
-                Serial.println(F("TUNE: Timeout alcanzando posición media. Abortando."));
+                Serial.println(F("TUNE: Timeout alcanzando posicion media. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
             }
             break;
 
         case TunePhase::RELAY_ACTIVE: {
-            // Control relay: histéresis de ±5 alrededor del setpoint
-            bool deberiaFwd = (error > 5);   // por debajo → mover adelante
-            bool deberiaRev = (error < -5);  // por encima → mover atrás
+            bool deberiaFwd = (error > TUNE_RELAY_HYSTERESIS);
+            bool deberiaRev = (error < -TUNE_RELAY_HYSTERESIS);
 
             if (deberiaFwd && !tuneCtx.relayFwd) {
-                // Cambio de dirección (cruce)
                 registrarCruce(posicion);
                 tuneCtx.relayFwd = true;
             } else if (deberiaRev && tuneCtx.relayFwd) {
@@ -601,14 +580,12 @@ static void tickTuning() {
                 tuneCtx.relayFwd = false;
             }
 
-            // Aplicar relay
             if (tuneCtx.relayFwd) {
                 mover(TUNE_PWM, true);
             } else {
                 mover(TUNE_PWM, false);
             }
 
-            // Trackear pico y valle actuales
             if (posicion > tuneCtx.currentPeak) {
                 tuneCtx.currentPeak = static_cast<float>(posicion);
             }
@@ -616,10 +593,9 @@ static void tickTuning() {
                 tuneCtx.currentValley = static_cast<float>(posicion);
             }
 
-            // Timeout total: 30s
-            if (nowMs - tuneCtx.phaseStartMs > 30000) {
+            if (nowMs - tuneCtx.phaseStartMs > TUNE_TIMEOUT_MS) {
                 detener();
-                Serial.println(F("TUNE: Timeout 30s. Abortando."));
+                Serial.println(F("TUNE: Timeout 90s. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
             }
@@ -632,14 +608,13 @@ static void tickTuning() {
             break;
 
         case TunePhase::CALCULATE: {
-            if (tuneCtx.cycleCount < 3) {
+            if (tuneCtx.cycleCount < TUNE_MIN_CYCLES) {
                 Serial.println(F("TUNE: Ciclos insuficientes. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
                 break;
             }
 
-            // Calcular período promedio (Tu) y amplitud promedio (a)
             float sumPeriod = 0.0f;
             float sumAmp = 0.0f;
             uint8_t valid = 0;
@@ -655,7 +630,7 @@ static void tickTuning() {
             }
 
             if (valid < 2) {
-                Serial.println(F("TUNE: Amplitud muy pequeña. Abortando."));
+                Serial.println(F("TUNE: Amplitud muy pequena. Abortando."));
                 tuneCtx.phase = TunePhase::IDLE;
                 sysMode = SystemMode::OPERATION;
                 break;
@@ -664,22 +639,14 @@ static void tickTuning() {
             float Tu = sumPeriod / static_cast<float>(valid);
             float a  = sumAmp / static_cast<float>(valid);
 
-            // Ku = 4 * h / (π * a)
-            // h = amplitud del relay en unidades de proceso (≈ 50% del rango a PWM 140)
-            // Aproximación: a PWM 140 (~55% duty), el actuador se mueve ~55% del rango
-            // pero la oscilación real depende de la carga. h se estima como la
-            // posición máxima alcanzable con el relay, limitada por los topes.
-            // Para un actuador con resorte, asumimos h ≈ 50 (porcentaje de rango).
             constexpr float H_ESTIMADO = 50.0f;
             constexpr float PI_F = 3.14159265f;
             float Ku = 4.0f * H_ESTIMADO / (PI_F * a);
 
-            // Ziegler-Nichols para PID (forma paralela)
             float Kp = 0.6f * Ku;
             float Ki = 1.2f * Ku / Tu;
             float Kd = 0.075f * Ku * Tu;
 
-            // Clamp a rangos seguros
             Kp = clampFloat(Kp, 0.1f, 50.0f);
             Ki = clampFloat(Ki, 0.0f, 20.0f);
             Kd = clampFloat(Kd, 0.0f, 20.0f);
@@ -706,7 +673,7 @@ static void tickTuning() {
             cfg.cv = MAGIC_NUMBER;
             if (!eepromPutSafe(0, cfg)) { Serial.println(F("EEPROM write failed!")); }
             Serial.println(F("Valores guardados en EEPROM."));
-            Serial.println(F("Envie CAL para recalibrar límites, o RST para operación normal."));
+            Serial.println(F("Envie CAL para recalibrar limites, o RST para operacion normal."));
 
             tuneCtx.phase = TunePhase::IDLE;
             sysMode = SystemMode::OPERATION;
@@ -720,11 +687,9 @@ static void registrarCruce(int16_t posicion) {
     uint32_t nowUs = micros();
 
     if (tuneCtx.firstSwitchUs == 0) {
-        // Primer cruce — solo guardar tiempo
         tuneCtx.firstSwitchUs = nowUs;
         tuneCtx.lastSwitchUs = nowUs;
 
-        // Guardar primer pico/valle
         float amp = tuneCtx.currentPeak - tuneCtx.currentValley;
         if (amp > 1.0f && tuneCtx.cycleCount < 8) {
             tuneCtx.peaks[tuneCtx.cycleCount] = tuneCtx.currentPeak;
@@ -735,46 +700,35 @@ static void registrarCruce(int16_t posicion) {
         return;
     }
 
-    // Medir período medio ciclo (cruce a cruce)
     float dt = static_cast<float>(static_cast<int32_t>(nowUs - tuneCtx.lastSwitchUs)) / 1000000.0f;
     tuneCtx.lastSwitchUs = nowUs;
 
-    if (dt > 0.005f && dt < 10.0f) {  // período entre 5ms y 10s
+    if (dt > 0.005f && dt < 10.0f) {
         if (tuneCtx.cycleCount < 8) {
-            tuneCtx.periods[tuneCtx.cycleCount] = dt * 2.0f;  // período completo
+            tuneCtx.periods[tuneCtx.cycleCount] = dt * 2.0f;
             tuneCtx.peaks[tuneCtx.cycleCount] = tuneCtx.currentPeak;
             tuneCtx.valleys[tuneCtx.cycleCount] = tuneCtx.currentValley;
         }
         ++tuneCtx.cycleCount;
 
-        Serial.print(F("."));  // progreso visual
+        Serial.print(F("."));
     }
 
-    // Resetear trackeo de pico/valle para el próximo medio ciclo
     tuneCtx.currentPeak = -1000.0f;
     tuneCtx.currentValley = 1000.0f;
 
-    // Suficientes ciclos?
     if (tuneCtx.cycleCount >= 6) {
         tuneCtx.phase = TunePhase::CYCLES_DONE;
         Serial.println(F("\nTUNE: Ciclos suficientes."));
     }
 }
 
-// ==========================================
-// --- Operación Normal (PID con asentado) ---
-// ==========================================
-
 static void tickOperation() {
     if (sysState.isFaulted) { return; }
-    if (cfg.cv != MAGIC_NUMBER) {
-        // No calibrado — no operar
-        return;
-    }
+    if (cfg.cv != MAGIC_NUMBER) { return; }
 
     uint32_t nowMs = millis();
 
-    // Leer y filtrar entradas
     int16_t rOp = static_cast<int16_t>(filterPedal.filteredValue);
     int16_t rFe = static_cast<int16_t>(filterFeedback.filteredValue);
 
@@ -786,24 +740,18 @@ static void tickOperation() {
 
     int16_t error = static_cast<int16_t>(setpoint - posicion);
 
-    // --- Lógica de asentamiento (anti-ronroneo) ---
     if (asentado) {
-        // Motor apagado. Reactivar solo si error supera umbral.
         if (abs(static_cast<int>(error)) > static_cast<int16_t>(UMBRAL_REACTIVACION)) {
             asentado = false;
             lastPidTime = micros();
         }
-        // Si está asentado, no ejecuta PID ni mueve motor.
     }
 
     if (!asentado) {
-        // Verificar si debemos entrar en asentado
         if (inDeadZone(error)) {
-            // Dentro de zona muerta — esperar tiempo de asentamiento
             if (asentadoTimer == 0) {
                 asentadoTimer = nowMs;
             } else if (nowMs - asentadoTimer >= TIEMPO_ASENTAMIENTO_MS) {
-                // Tiempo cumplido — asentar
                 detener();
                 integralAccumulator = 0.0f;
                 errorAnterior = 0;
@@ -812,18 +760,14 @@ static void tickOperation() {
                 return;
             }
         } else {
-            asentadoTimer = 0;  // Reset timer si salimos de zona muerta
+            asentadoTimer = 0;
         }
 
-        // --- Si llegamos aquí, el PID debe ejecutarse ---
         uint32_t nowUs = micros();
         float Ts = static_cast<float>(static_cast<int32_t>(nowUs - lastPidTime)) / 1000000.0f;
-        if (Ts <= 0.0f || Ts > 0.1f) {
-            Ts = 0.01f;
-        }
+        if (Ts <= 0.0f || Ts > 0.1f) { Ts = 0.01f; }
         lastPidTime = nowUs;
 
-        // --- Límites mecánicos ---
         bool direccionHaciaMax = (error > 0);
         bool enLimiteMecanico = false;
 
@@ -842,7 +786,6 @@ static void tickOperation() {
         }
 
         if (!enLimiteMecanico) {
-            // --- PID con ganancias tuneadas desde EEPROM ---
             PidInput pidIn;
             pidIn.errorActual = error;
             pidIn.errorAnterior = errorAnterior;
@@ -866,25 +809,18 @@ static void tickOperation() {
         }
     }
 
-    // --- Reporte serial cada 250ms ---
     static uint32_t reportTimer = 0;
     if (nowMs - reportTimer > 250) {
         Serial.print(F("SetP:")); Serial.print(setpoint);
         Serial.print(F(" Act:")); Serial.print(posicion);
         Serial.print(F(" Err:")); Serial.print(error);
-        if (asentado) {
-            Serial.print(F(" [ASENTADO]"));
-        }
+        if (asentado) { Serial.print(F(" [ASENTADO]")); }
         Serial.print(F(" Kp:")); Serial.print(cfg.kp, 1);
         Serial.print(F(" Ki:")); Serial.print(cfg.ki, 2);
         Serial.print(F(" Kd:")); Serial.println(cfg.kd, 2);
         reportTimer = nowMs;
     }
 }
-
-// ==========================================
-// --- I/O Serial ---
-// ==========================================
 
 static void resetFault() {
     sysState.isFaulted = false;
@@ -896,7 +832,6 @@ static void resetFault() {
 }
 
 static void procesarComando() {
-    // Comandos globales (funcionan en cualquier modo)
     if (strcmp(cmdBuffer, "CAL") == 0) {
         iniciarCalibracion();
         return;
@@ -905,9 +840,15 @@ static void procesarComando() {
         resetFault();
         return;
     }
+    if (strcmp(cmdBuffer, "OCAL") == 0) {
+        extern void oc_calibrate(void);
+        oc_calibrate();
+        Serial.println(F("[OC] Recalibracion iniciada..."));
+        return;
+    }
     if (strcmp(cmdBuffer, "TUNE") == 0) {
         if (cfg.cv != MAGIC_NUMBER && calState != CalState::SAVE_PROMPT) {
-            Serial.println(F("Complete la calibración (CAL) antes de tunear."));
+            Serial.println(F("Complete la calibracion (CAL) antes de tunear."));
             return;
         }
         iniciarTuning();
@@ -919,7 +860,6 @@ static void procesarComando() {
         return;
     }
 
-    // Comandos por modo
     switch (sysMode) {
         case SystemMode::CALIBRATION:
             procesarComandoCal();
@@ -935,30 +875,48 @@ static void procesarComando() {
             }
             break;
         case SystemMode::OPERATION:
-            // Sin comandos especiales en operación
             break;
     }
 }
 
+static void trimWhitespace(char* str) {
+    char* end = str + strlen(str) - 1;
+    while (end >= str && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
+        *end = '\0';
+        --end;
+    }
+    char* start = str;
+    while (*start == ' ' || *start == '\t') { ++start; }
+    if (start != str) { memmove(str, start, strlen(start) + 1); }
+}
+
 void procesarSerial() {
+    static uint32_t lastCharMs = 0;
     while (Serial.available() > 0) {
         char c = static_cast<char>(Serial.read());
         if (c == '\n' || c == '\r') {
             if (cmdIndex > 0) {
                 cmdBuffer[cmdIndex] = '\0';
+                ucase(cmdBuffer);
+                trimWhitespace(cmdBuffer);
                 procesarComando();
                 cmdIndex = 0;
             }
         } else if (cmdIndex < (sizeof(cmdBuffer) - 1u)) {
             cmdBuffer[cmdIndex] = c;
             ++cmdIndex;
+            lastCharMs = millis();
         }
     }
+    // Timeout de 5ms en CUALQUIER modo para procesar sin Enter
+    if (cmdIndex > 0 && millis() - lastCharMs > 5) {
+        cmdBuffer[cmdIndex] = '\0';
+        ucase(cmdBuffer);
+        trimWhitespace(cmdBuffer);
+        procesarComando();
+        cmdIndex = 0;
+    }
 }
-
-// ==========================================
-// --- Setup & Loop ---
-// ==========================================
 
 void setup() {
     MCUSR = 0;
@@ -969,26 +927,29 @@ void setup() {
 
     initMotorHardware();
 
-    // Leer configuración de EEPROM
-    if (!eepromGetSafe(0, cfg)) { Serial.println(F("EEPROM read failed!")); /* handle error */ }
+    if (!eepromGetSafe(0, cfg)) { Serial.println(F("EEPROM read failed!")); }
 
-    // Inicializar filtros
     filterPedal.init(static_cast<float>(analogRead(pinPotOp)));
     filterFeedback.init(static_cast<float>(analogRead(pinPotFeed)));
     filterCurrent.init(static_cast<float>(analogRead(PIN_IS_SENSE)));
 
     lastPidTime = micros();
 
-    // --- NUEVO: Inicializar detección de sobre‑corriente ---
-    pinMode(A2, INPUT);          // A2 es la entrada de sobre‑corriente (después del OR de diodos)
-    oc_loadCalibration();        // cargar nominal y sigma de EEPROM
-    // Si la EEPROM está virgen, hacer un calibrado automático en el primer arranque
-    if (oc_getNominal() == 0 && oc_getSigma() == 4) {
+    pinMode(A2, INPUT);
+    oc_loadCalibration();
+    if (!oc_isCalibrated()) {
         oc_calibrate();
+        uint32_t ocTimeout = millis() + 5000;
+        while (!oc_isCalibrated() && millis() < ocTimeout) {
+            oc_updateCalibration();
+            delayMicroseconds(100);
+        }
+        if (!oc_isCalibrated()) {
+            Serial.println(F("[OC] Timeout calibracion. Sensor A2 desconectado?"));
+        }
     }
 
     if (cfg.cv != MAGIC_NUMBER) {
-        // EEPROM inválida o virgen → valores por defecto + calibración
         cfg = Config{};
         cfg.pMax = 1023;
         cfg.mMax = 1023;
@@ -996,7 +957,6 @@ void setup() {
         cfg.kp = DEFAULT_KP;
         cfg.ki = DEFAULT_KI;
         cfg.kd = DEFAULT_KD;
-        // cv queda en 0
         iniciarCalibracion();
     } else {
         Serial.println(F("Sistema listo. Comandos: CAL RST TUNE"));
@@ -1009,25 +969,25 @@ void setup() {
 void loop() {
     procesarSerial();
 
-    // Actualizar filtros siempre
     filterPedal.update(static_cast<float>(analogRead(pinPotOp)));
     filterFeedback.update(static_cast<float>(analogRead(pinPotFeed)));
 
-    // Dead-time: resetear integral mientras dura
     if (deadTimeActive) {
         integralAccumulator = 0.0f;
         errorAnterior = 0;
     }
 
-    // --- NUEVO: Chequeo periódico de sobre‑corriente (cada 5 ms) ---
     static uint32_t lastOcCheck = 0;
     uint32_t now = millis();
-    if (now - lastOcCheck >= 5) {   // cada 5 ms
+    if (now - lastOcCheck >= 5) {
         lastOcCheck = now;
-        oc_checkOverCurrent();      // no bloquea, solo pone safeState si es necesario
+        if (oc_isCalibrated()) {
+            oc_checkOverCurrent();
+        }
     }
 
-    // Despachar según modo
+    oc_updateCalibration();
+
     switch (sysMode) {
         case SystemMode::CALIBRATION:
             tickCalibration();
@@ -1041,6 +1001,5 @@ void loop() {
     }
 
     monitorStallCurrent();
-    delayMicroseconds(100); // yield CPU for UART
     wdt_reset();
 }
