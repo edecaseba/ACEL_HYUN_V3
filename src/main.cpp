@@ -388,13 +388,13 @@ static void comandoDIR(const char* arg) {
         cfg.accelIsFwd = true;
         calState = CalState::LIMIT_ACCEL;
         Serial.println(F("Direccion: R_PWM ACELERA. Guardado."));
-        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleracion."));
+        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de ACELERACION."));
         Serial.println(F("Cuando llegue, envie SETMAX"));
     } else if (strstr(arg, "REV ACEL") != nullptr || strcmp(arg, "REV") == 0) {
         cfg.accelIsFwd = false;
         calState = CalState::LIMIT_ACCEL;
         Serial.println(F("Direccion: L_PWM ACELERA. Guardado."));
-        Serial.println(F("Paso 4/6: Use MOVEFWD para ir al tope de aceleracion."));
+        Serial.println(F("Paso 4/6: Use MOVEREV para ir al tope de ACELERACION."));
         Serial.println(F("Cuando llegue, envie SETMAX"));
     } else {
         Serial.println(F("Use: DIR FWD ACEL  o  DIR REV ACEL"));
@@ -428,15 +428,25 @@ static void procesarComandoCal() {
 
     if (strcmp(cmdBuffer, "MOVEFWD") == 0) {
         if (calState == CalState::LIMIT_ACCEL || calState == CalState::LIMIT_DECEL) {
-            mover(VEL_TEST, true);
-            Serial.println(F("Moviendo hacia limite de aceleracion..."));
+            bool moverHaciaAcel = cfg.accelIsFwd;  // true = FWD acelera, false = REV acelera
+            mover(VEL_TEST, moverHaciaAcel);
+            if (calState == CalState::LIMIT_ACCEL) {
+                Serial.println(F("Moviendo hacia limite de ACELERACION..."));
+            } else {
+                Serial.println(F("Moviendo hacia limite de DESACELERACION..."));
+            }
         }
         return;
     }
     if (strcmp(cmdBuffer, "MOVEREV") == 0) {
         if (calState == CalState::LIMIT_ACCEL || calState == CalState::LIMIT_DECEL) {
-            mover(VEL_TEST, false);
-            Serial.println(F("Moviendo hacia limite de desaceleracion..."));
+            bool moverHaciaAcel = !cfg.accelIsFwd;  // opuesto a MOVEFWD
+            mover(VEL_TEST, moverHaciaAcel);
+            if (calState == CalState::LIMIT_ACCEL) {
+                Serial.println(F("Moviendo hacia limite de ACELERACION..."));
+            } else {
+                Serial.println(F("Moviendo hacia limite de DESACELERACION..."));
+            }
         }
         return;
     }
@@ -446,12 +456,16 @@ static void procesarComandoCal() {
             cfg.mMax = static_cast<int16_t>(filterFeedback.filteredValue);
             detener();
             Serial.print(F("mMax = ")); Serial.print(cfg.mMax);
-            Serial.println(F(" guardado."));
+            Serial.println(F(" guardado (tope ACELERACION)."));
             calState = CalState::LIMIT_DECEL;
-            Serial.println(F("Paso 5/6: Use MOVEREV para ir al tope de desaceleracion."));
+            if (cfg.accelIsFwd) {
+                Serial.println(F("Paso 5/6: Use MOVEREV para ir al tope de DESACELERACION."));
+            } else {
+                Serial.println(F("Paso 5/6: Use MOVEFWD para ir al tope de DESACELERACION."));
+            }
             Serial.println(F("Cuando llegue, envie SETMIN"));
         } else {
-            Serial.println(F("SETMAX no valido aqui."));
+            Serial.println(F("SETMAX no valido aqui. Use en paso 4 (tope ACELERACION)."));
         }
         return;
     }
@@ -461,12 +475,12 @@ static void procesarComandoCal() {
             cfg.mMin = static_cast<int16_t>(filterFeedback.filteredValue);
             detener();
             Serial.print(F("mMin = ")); Serial.print(cfg.mMin);
-            Serial.println(F(" guardado."));
+            Serial.println(F(" guardado (tope DESACELERACION)."));
             calState = CalState::SAVE_PROMPT;
             Serial.println(F("Paso 6/6: Envie SAVE para guardar en EEPROM"));
             Serial.println(F("         o TUNE para auto-ajustar PID primero."));
         } else {
-            Serial.println(F("SETMIN no valido aqui."));
+            Serial.println(F("SETMIN no valido aqui. Use en paso 5 (tope DESACELERACION)."));
         }
         return;
     }
