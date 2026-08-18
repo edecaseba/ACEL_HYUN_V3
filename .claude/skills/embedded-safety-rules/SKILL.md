@@ -24,7 +24,7 @@ Target unico y definitivo: Arduino Nano ATmega328P (ver `ai/hardware_target.json
 ## Safe State (ISO 13849-1)
 Ante cualquier fallo critico: salidas de potencia → 0 logico/alta impedancia inmediato, flag de error no auto-borrable, notificar al operador.
 
-Disparan Safe State: perdida de señal sensor >50ms, sobrecorriente (IS_SENSE > umbral), watchdog expirado, stall mecanico detectado.
+Disparan Safe State: perdida de señal sensor >50ms (`checkSignalLoss()` en `main.cpp`, logica pura en `signal_loss.h` — necesario porque el actuador NO tiene finales de carrera fisicos, ver `motor-startup-diagnostics`), sobrecorriente (IS_SENSE > umbral), watchdog expirado, stall mecanico detectado.
 
 Secuencia de boot segura: 1) pines de potencia como salida en LOW, 2) pines de entrada con pull-up/pull-down en estado seguro, 3) inicializar perifericos, 4) verificar alimentacion/sensores, 5) recien ahi habilitar potencia (EN → HIGH).
 

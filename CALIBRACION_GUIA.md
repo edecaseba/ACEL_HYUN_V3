@@ -395,6 +395,12 @@ SetP:45 Act:45 Err:0 [ASENTADO] Kp:27.4 Ki:4.44 Kd:20.00
 - Ejecutar `OCAL` con motor PARADO (`STOP` primero)
 - Verificar sensor A2 (ACS712/shunt) y conexiones
 
+### "CRITICAL: PERDIDA DE SEÑAL PEDAL/FEEDBACK" y el sistema entra en falla
+- El actuador **no tiene finales de carrera físicos** — el firmware chequea que la lectura de A0 (pedal) o A1 (feedback) esté dentro del rango calibrado (`pMin`/`pMax`, `mMin`/`mMax`) con un margen de tolerancia; si se sale por más de 50ms, corta el motor por seguridad
+- Revisar primero conexión física del potenciómetro correspondiente (cable cortado, wiper flojo) — con un divisor resistivo simple, un cable suelto puede dar cualquier lectura, no necesariamente 0 o al fondo de escala
+- Si la conexión está bien, puede ser una calibración vieja/corrupta: recalibrar con `CAL` o `ACAL`
+- `RST` limpia el fallo una vez resuelta la causa
+
 ### ACAL hace timeout buscando el tope (Paso 4/5 o 5/5)
 - Confirmar que el sensor de corriente está calibrado (`OCAL` con motor parado)
 - Si el actuador es muy débil o hay mucha fricción, puede no llegar a generar suficiente corriente para disparar la detección de stall — usar calibración manual (`CAL`, sección 3) en ese caso
@@ -414,6 +420,8 @@ Para reportar problemas, captura la salida completa del monitor serie desde `CAL
 
 ## 10. Seguridad
 
+⚠️ **El actuador no tiene finales de carrera físicos.** No hay ningún microswitch ni sensor independiente que corte el motor por sí solo al llegar a un extremo — el límite de posición es enteramente software (rango calibrado del potenciómetro de feedback) respaldado por la detección de stall por sobrecorriente cuando el motor efectivamente choca contra el tope mecánico real de la máquina. Por eso una calibración correcta (sección 3 o 4) y no desconectar/dañar el potenciómetro de feedback son críticos — sin ellos, el único respaldo que queda es el stall.
+
 ⚠️ **ANTES DE CALIBRAR (manual o `ACAL`):**
 - Asegurar área libre alrededor del actuador/motor
 - Tener acceso rápido a botón de parada de emergencia / desconexión 24V
@@ -421,9 +429,9 @@ Para reportar problemas, captura la salida completa del monitor serie desde `CAL
 - El sistema tiene Safe State automático (corta PWM + EN=LOW) ante:
   - Overcurrent (sensor A2)
   - Stall (corriente > 950 ADC)
-  - Pérdida de señal pedal/feedback
+  - Pérdida de señal pedal/feedback (lectura fuera del rango calibrado por >50ms — ver sección 8)
 
 ---
 
-**Versión documento:** v2.0.24+ (2026-08-17)
-**Firmware compatible:** ACEL_HYUN_V3 v2.0.24+
+**Versión documento:** v2.0.25+ (2026-08-17)
+**Firmware compatible:** ACEL_HYUN_V3 v2.0.25+

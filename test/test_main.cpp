@@ -5,6 +5,7 @@
 #include "mock_arduino.h"
 #include "EEPROM.h"
 #include "motor_types.h"
+#include "signal_loss.h"
 
 #define F(x) x
 
@@ -222,6 +223,53 @@ void test_calibration_vel_test_constant_value(void) {
     TEST_ASSERT_EQUAL_UINT8(180, 180); // VEL_TEST constant
 }
 
+// --- fueraDeRangoPlausible() — sin finales de carrera fisicos, esta es la
+// unica defensa contra perdida de señal en los potenciometros (ver signal_loss.h) ---
+
+void test_signal_plausible_reading_inside_calibrated_range(void) {
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(500, 100, 900));
+}
+
+void test_signal_plausible_reading_at_exact_calibrated_bounds(void) {
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(100, 100, 900));
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(900, 100, 900));
+}
+
+void test_signal_plausible_reading_within_margin_of_bounds(void) {
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(60, 100, 900));   // 40 por debajo, margen=50
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(940, 100, 900));  // 40 por encima, margen=50
+}
+
+void test_signal_implausible_reading_beyond_margin_below(void) {
+    TEST_ASSERT_TRUE(fueraDeRangoPlausible(30, 100, 900));  // 70 por debajo, margen=50
+}
+
+void test_signal_implausible_reading_beyond_margin_above(void) {
+    TEST_ASSERT_TRUE(fueraDeRangoPlausible(980, 100, 900)); // 80 por encima, margen=50
+}
+
+void test_signal_implausible_floating_wiper_extremes(void) {
+    // Wiper desconectado en divisor resistivo simple: puede flotar a cualquier
+    // extremo del rango ADC, lejos del rango calibrado real.
+    TEST_ASSERT_TRUE(fueraDeRangoPlausible(0, 100, 900));
+    TEST_ASSERT_TRUE(fueraDeRangoPlausible(1023, 100, 900));
+}
+
+void test_signal_plausible_handles_inverted_calibration(void) {
+    // pMin/mMin puede ser numericamente mayor que pMax/mMax si el
+    // potenciometro esta cableado "al reves" — la funcion no debe asumir orden.
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(500, 900, 100));
+    TEST_ASSERT_TRUE(fueraDeRangoPlausible(30, 900, 100));
+}
+
+void test_signal_plausible_margin_clamped_near_adc_bounds(void) {
+    // Calibracion con pMin muy cerca de 0: el margen no debe generar
+    // un limite inferior negativo (lo clampea a 0).
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(0, 10, 900));
+    // Calibracion con pMax muy cerca de 1023: el margen no debe superar 1023.
+    TEST_ASSERT_FALSE(fueraDeRangoPlausible(1023, 100, 1015));
+}
+
 void run_main_tests(void) {
     RUN_TEST(test_vel_test_is_180_in_mover_during_calibration);
     RUN_TEST(test_moverev_message_in_limit_decel_says_aceleracion);
@@ -231,4 +279,12 @@ void run_main_tests(void) {
     RUN_TEST(test_first_movement_after_stop_allows_immediate_movement);
     RUN_TEST(test_first_movement_after_stop_resets_after_first_move);
     RUN_TEST(test_calibration_vel_test_constant_value);
+    RUN_TEST(test_signal_plausible_reading_inside_calibrated_range);
+    RUN_TEST(test_signal_plausible_reading_at_exact_calibrated_bounds);
+    RUN_TEST(test_signal_plausible_reading_within_margin_of_bounds);
+    RUN_TEST(test_signal_implausible_reading_beyond_margin_below);
+    RUN_TEST(test_signal_implausible_reading_beyond_margin_above);
+    RUN_TEST(test_signal_implausible_floating_wiper_extremes);
+    RUN_TEST(test_signal_plausible_handles_inverted_calibration);
+    RUN_TEST(test_signal_plausible_margin_clamped_near_adc_bounds);
 }

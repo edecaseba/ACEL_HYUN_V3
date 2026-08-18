@@ -10,6 +10,8 @@ Responder siempre en **castellano**, directo, sin saludos ni frases de cortesia 
 
 Pines clave: `PIN_POT_OP` A0, `PIN_POT_FEED` A1, `PIN_IS_SENSE` A2, `PIN_EN` D8, `PIN_L_PWM` D9 (OC1A), `PIN_R_PWM` D10 (OC1B).
 
+**El actuador NO tiene finales de carrera fisicos.** El unico limite de posicion es software: el rango calibrado del potenciometro de feedback (`cfg.mMin`/`cfg.mMax`) mas la deteccion de stall por sobrecorriente contra el tope mecanico real. Los potenciometros (pedal y feedback) son divisores resistivos simples sin pull-up/pull-down: un cable cortado o wiper desconectado puede flotar a cualquier valor ADC, no a un riel conocido. Por eso `checkSignalLoss()` en `main.cpp` (logica pura en `src/signal_loss.h`) dispara Safe State si una lectura queda fuera del rango calibrado — es la unica defensa que existe, tenerlo presente en cualquier cambio a la logica de posicion/calibracion.
+
 **No hay ni habra migracion a Rust ni a ESP32-S3 (ni a ningun otro MCU).** Decision explicita del usuario: no es seguro migrar el control de un motor de maquinaria pesada real a un ecosistema/toolchain menos maduro en microcontroladores de esta clase. La placa ya esta fabricada con el ATmega328P. No proponer ni planificar ese tipo de migracion salvo que el usuario lo pida explicitamente de nuevo.
 
 ## Invariantes que no se rompen nunca
@@ -19,6 +21,7 @@ Pines clave: `PIN_POT_OP` A0, `PIN_POT_FEED` A1, `PIN_IS_SENSE` A2, `PIN_EN` D8,
 - Dead-time de 150ms entre cambios de direccion del puente H
 - PWM del puente H a 20kHz, nunca por encima de 25kHz (limite real del BTS7960 — ver skill `ibt2-bts7960`, incidente documentado en `motor-startup-diagnostics`)
 - Direcciones EEPROM sin colisionar: `Config` (main.cpp, addr 0) vs calibracion de sobrecorriente (`overcurrent.h`, addr 64+) — hay un `static_assert` que lo protege, no correrlo por decoracion
+- `checkSignalLoss()` debe seguir corriendo en cada `loop()` durante `OPERATION` — es el unico respaldo ante perdida de señal de un potenciometro, no hay finales de carrera fisicos
 
 ## Build y test
 - `pio run -e nanoatmega328` — build real del firmware (AVR), debe compilar limpio con `-Werror`

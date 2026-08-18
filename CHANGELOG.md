@@ -1,4 +1,12 @@
 # CHANGELOG — ACEL_HYUN_V3
+## v2.0.25 — 2026-08-17
+### Fix de seguridad: detección de pérdida de señal (el actuador no tiene finales de carrera físicos)
+- ✅ **`checkSignalLoss()` en `main.cpp`**: el sistema no tiene ningún final de carrera físico independiente — el único límite de posición es el rango calibrado del potenciómetro (`cfg.pMin/pMax`, `cfg.mMin/mMax`) más el stall por sobrecorriente contra el tope mecánico real. Los potenciómetros son divisores resistivos simples sin pull-up/pull-down: un cable cortado o wiper desconectado puede flotar a cualquier valor ADC, no a un riel conocido. Esta era una defensa documentada en las reglas de seguridad del proyecto (`ai/code_rules.md` original) pero nunca implementada.
+- ✅ **`src/signal_loss.h` (nuevo)**: `fueraDeRangoPlausible()` extraída como algoritmo puro, testeable, sin dependencia de Arduino.h — mismo patrón que `pid_controller.h`.
+- ✅ **Comportamiento**: si la lectura cruda de pedal o feedback queda fuera de `[min(cal)-50, max(cal)+50]` (margen en cuentas ADC) durante más de 50ms sostenidos, en modo `OPERATION` y con calibración válida → `safeState()` (EN=LOW, PWM=0, `isFaulted=true`) + mensaje `CRITICAL: PERDIDA DE SEÑAL PEDAL/FEEDBACK`. Se resetea con `RST`, igual que overcurrent/stall.
+- ✅ **Tests nuevos (8)**: rango calibrado normal, bordes exactos, dentro/fuera de margen, extremos de wiper flotante, calibración invertida (pMin numéricamente mayor que pMax), clamps del margen cerca de 0/1023.
+- ✅ **Verificación**: `pio run -e nanoatmega328` limpio (RAM 29.4%, Flash 60.9%). `pio test -e native`: 46/46 PASS.
+
 ## v2.0.24 — 2026-08-17
 ### Fix crítico: reset del micro al arrancar el motor
 - ✅ **Timer1 PWM revertido a 20kHz (10-bit, TOP=ICR1=799)**: v2.0.23 había subido el PWM del puente H a 62.5kHz (modo 8-bit) para que `analogWrite()` tuviera rango completo. El IBT-2/BTS7960 soporta máx 25kHz (datasheet, `skill-ibt2.md`) — a 62.5kHz el driver malfunciona y genera transitorios que resetean el ATmega328P justo al arrancar el PWM. Causa raíz más probable del síntoma "el micro se reinicia".

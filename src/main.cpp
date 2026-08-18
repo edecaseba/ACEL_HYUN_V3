@@ -6,6 +6,7 @@
 #include "pid_controller.h"
 #include <EEPROM.h>
 #include "overcurrent.h"
+#include "signal_loss.h"
 
 template<typename T>
 bool eepromPutSafe(int addr, const T& value) {
@@ -347,6 +348,45 @@ void monitorStallCurrent() {
         integralAccumulator = 0.0f;
         errorAnterior = 0;
         Serial.println(F("CRITICAL: STALL DETECTADO. Puente H bloqueado."));
+    }
+}
+
+// Ver src/signal_loss.h: el actuador no tiene finales de carrera fisicos,
+// esta es la unica defensa contra perdida de señal en pedal/feedback.
+static uint32_t pedalOutOfRangeSince    = 0;
+static uint32_t feedbackOutOfRangeSince = 0;
+
+void checkSignalLoss(uint16_t rawPedal, uint16_t rawFeedback) {
+    if (sysMode != SystemMode::OPERATION || cfg.cv != MAGIC_NUMBER || sysState.isFaulted) {
+        pedalOutOfRangeSince = 0;
+        feedbackOutOfRangeSince = 0;
+        return;
+    }
+
+    uint32_t now = millis();
+
+    if (fueraDeRangoPlausible(rawPedal, cfg.pMin, cfg.pMax)) {
+        if (pedalOutOfRangeSince == 0) {
+            pedalOutOfRangeSince = now;
+        } else if (now - pedalOutOfRangeSince >= SIGNAL_LOSS_TIMEOUT_MS) {
+            safeState();
+            Serial.println(F("CRITICAL: PERDIDA DE SEÑAL PEDAL (A0 fuera de rango calibrado)."));
+            return;
+        }
+    } else {
+        pedalOutOfRangeSince = 0;
+    }
+
+    if (fueraDeRangoPlausible(rawFeedback, cfg.mMin, cfg.mMax)) {
+        if (feedbackOutOfRangeSince == 0) {
+            feedbackOutOfRangeSince = now;
+        } else if (now - feedbackOutOfRangeSince >= SIGNAL_LOSS_TIMEOUT_MS) {
+            safeState();
+            Serial.println(F("CRITICAL: PERDIDA DE SEÑAL FEEDBACK (A1 fuera de rango calibrado)."));
+            return;
+        }
+    } else {
+        feedbackOutOfRangeSince = 0;
     }
 }
 
@@ -1094,6 +1134,8 @@ static void resetFault() {
     integralAccumulator = 0.0f;
     errorAnterior = 0;
     asentado = false;
+    pedalOutOfRangeSince = 0;
+    feedbackOutOfRangeSince = 0;
     digitalWrite(PIN_EN, HIGH);
     Serial.println(F("Fallo reseteado. Sistema listo."));
 }
@@ -1268,8 +1310,11 @@ void loop() {
 
     procesarSerial();
 
-    filterPedal.update(static_cast<float>(analogRead(pinPotOp)));
-    filterFeedback.update(static_cast<float>(analogRead(pinPotFeed)));
+    uint16_t rawPedal    = static_cast<uint16_t>(analogRead(pinPotOp));
+    uint16_t rawFeedback = static_cast<uint16_t>(analogRead(pinPotFeed));
+    filterPedal.update(static_cast<float>(rawPedal));
+    filterFeedback.update(static_cast<float>(rawFeedback));
+    checkSignalLoss(rawPedal, rawFeedback);
 
     if (deadTimeActive) {
         integralAccumulator = 0.0f;

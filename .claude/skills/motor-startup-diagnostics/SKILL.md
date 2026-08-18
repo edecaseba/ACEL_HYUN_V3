@@ -7,6 +7,8 @@ description: Historial de causas raiz encontradas y corregidas para fallas al ar
 
 Este documento existe para no re-derivar desde cero un diagnostico ya hecho. Antes de investigar un reporte nuevo de arranque del motor, revisar si encaja con alguno de estos patrones ya confirmados.
 
+**Contexto que hay que tener siempre presente: el actuador no tiene finales de carrera fisicos.** Un mensaje `CRITICAL: PERDIDA DE SEÑAL PEDAL/FEEDBACK` en el arranque (Safe State inmediato, `sysState.isFaulted=true`) no es un bug — es `checkSignalLoss()` (v2.0.25, `signal_loss.h`) actuando correctamente porque la lectura del potenciometro esta fuera del rango calibrado. Antes de "arreglarlo", verificar que no sea un cable suelto real o una calibracion vieja/corrupta.
+
 ## Caso: "el micro se reinicia al arrancar el motor" (v2.0.23 → fix en v2.0.24)
 
 Sintoma reportado: el ATmega328P se resetea especificamente cuando el motor arranca a moverse (no en reposo).

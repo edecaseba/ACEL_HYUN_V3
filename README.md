@@ -2,7 +2,7 @@
 
 Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puente H IBT-2 (BTS7960), control PID en lazo cerrado y cumplimiento de normativas de seguridad industrial ISO 13849, ISO 7637-2 e ISO 13766.
 
-**Versión actual: v2.0.24 (2026-08-17)**
+**Versión actual: v2.0.25 (2026-08-17)**
 
 ---
 
@@ -84,15 +84,20 @@ ACEL_HYUN_V3/
 
 ## Seguridad Funcional
 
+> ⚠️ **El actuador no tiene finales de carrera físicos.** El límite de posición es 100% software: rango calibrado del potenciómetro de feedback + detección de stall por sobrecorriente contra el tope mecánico real. Ver `checkSignalLoss()` / `src/signal_loss.h`.
+
 - ✅ **ISO 13849**: Safe State ante fallos críticos (pérdida de sensor, timeout, sobrecorriente)
 - ✅ **ISO 7637-2**: Filtrado digital (EMA) para transitorios automotrices de 24 Vcc
 - ✅ **ISO 13766**: PWM a 20 kHz minimizando EMI, cambios de dirección con rampa y dead-time
 - ✅ **Boot Security**: Pines de potencia configurados antes de activar enable
 - ✅ **Zero Dynamic RAM**: Sin fragmentación de memoria en runtime
 
-## Novedades v2.0.24 (2026-08-17)
+## Novedades v2.0.25 (2026-08-17)
 
-### Fix crítico: reset del micro al arrancar el motor
+### Fix de seguridad: detección de pérdida de señal
+El actuador **no tiene finales de carrera físicos**. El único límite de posición es el rango calibrado del potenciómetro de feedback más el stall por sobrecorriente contra el tope mecánico real. `checkSignalLoss()` (`src/signal_loss.h`) dispara Safe State si la lectura de pedal o feedback queda fuera del rango calibrado por más de 50ms — antes esto estaba documentado como requisito de seguridad pero no implementado. Ver `CHANGELOG.md` y `CALIBRACION_GUIA.md` sección 10.
+
+### v2.0.24 — Fix crítico: reset del micro al arrancar el motor
 Ver `CHANGELOG.md` para el detalle completo. En resumen: el PWM del puente H se había subido por error a 62.5kHz (el IBT-2/BTS7960 admite máximo 25kHz), había un bug de modo en el Timer1 (OCR1A hacía de TOP y de duty al mismo tiempo) y una colisión de direcciones EEPROM entre la config general y la calibración de sobrecorriente. Los tres se corrigieron, más un soft-start no bloqueante y diagnóstico de causa de reset (`MCUSR`) por Serial.
 
 ### v2.0.23 — Auto-calibración completa (ACAL)
@@ -136,18 +141,18 @@ Guía completa paso a paso: `CALIBRACION_GUIA.md`.
 # Compilar
 pio run -e nanoatmega328
 
-# Tests unitarios (38/38 PASS)
+# Tests unitarios (46/46 PASS)
 pio test -e native
 
 # Subir a Arduino Nano
 pio run -e nanoatmega328 -t upload
 ```
 
-## Métricas v2.0.24
+## Métricas v2.0.25
 
-- **RAM**: 29.0% (594/2048 bytes)
-- **Flash**: 59.1% (18160/30720 bytes)
-- **Tests**: 38/38 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 maquina de estados)
+- **RAM**: 29.4% (602/2048 bytes)
+- **Flash**: 60.9% (18694/30720 bytes)
+- **Tests**: 46/46 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 maquina de estados + 8 perdida de señal)
 
 ## Horas de Desarrollo
 
