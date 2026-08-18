@@ -4,53 +4,7 @@
 #include <math.h>
 
 #include "mock_arduino.h"
-#include "EEPROM.h"
 #include "motor_types.h"
-
-static uint8_t mock_eeprom[1024];
-static uint16_t mock_analog_read_value = 0;
-static bool mock_safe_state_called = false;
-static unsigned long mock_millis_value = 0;
-static unsigned long mock_micros_value = 0;
-
-void mock_eeprom_init(void) {
-    memset(mock_eeprom, 0xFF, sizeof(mock_eeprom));
-}
-
-uint8_t EEPROMClass::read(int address) {
-    if (address < 0 || address >= 1024) return 0xFF;
-    return mock_eeprom[address];
-}
-
-void EEPROMClass::write(int address, uint8_t value) {
-    if (address < 0 || address >= 1024) return;
-    mock_eeprom[address] = value;
-}
-
-void EEPROMClass::update(int address, uint8_t value) {
-    if (address < 0 || address >= 1024) return;
-    mock_eeprom[address] = value;
-}
-
-int analogRead(uint8_t pin) {
-    (void)pin;
-    return mock_analog_read_value;
-}
-
-unsigned long millis(void) {
-    return mock_millis_value;
-}
-
-unsigned long micros(void) {
-    return mock_micros_value;
-}
-
-void safeState(void) {
-    mock_safe_state_called = true;
-}
-
-// Mock for motor direction (needed by oc_calibrate)
-ActuatorDirection sysState_currentDirection = ActuatorDirection::STOP;
 
 #define F(x) x
 
@@ -180,6 +134,7 @@ void run_overcurrent_tests(void) {
     mock_safe_state_called = false;
     mock_millis_value = 0;
     mock_micros_value = 0;
+    memset(mock_serial_buffer, 0, sizeof(mock_serial_buffer));
     oc_setNominalForTest(0);
     oc_setSigmaForTest(0);
     ocCalState = OC_IDLE;

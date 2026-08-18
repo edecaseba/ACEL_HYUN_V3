@@ -41,7 +41,7 @@ SISTEMA:  Lee A0 filtrado, guarda cfg.pMax
 ### Paso 3 — Test de dirección del motor (IBT-2)
 ```
 SERIAL TX: "Paso 3/6: Use FWD/REV/STOP para probar dirección del motor.
-            Luego envíe: DIR FWD ACEL  o  DIR REV ACEL"
+             Luego envíe: DIR FWD ACEL  o  DIR REV ACEL"
 TÉCNICO:  Envía → FWD  (el motor se mueve)
           Envía → REV  (el motor se mueve al revés)
           Envía → STOP (detiene)
@@ -55,8 +55,8 @@ SISTEMA:  Guarda cfg.accelIsFwd
 ### Paso 4 — Límite máximo del actuador
 ```
 SERIAL TX: "Paso 4/6: Use MOVEFWD para ir al tope de aceleración.
-            Cuando llegue, envíe SETMAX"
-TÉCNICO:  Envía → MOVEFWD (motor avanza hacia aceleración)
+             Cuando llegue, envíe SETMAX"
+TÉCNICO:  Envía → MOVEFWD (motor avanza hacia aceleración, PWM=180)
           Observa el actuador hasta que llegue al tope físico
           Envía → SETMAX
 SISTEMA:  Guarda cfg.mMax = feedback actual, detiene motor
@@ -66,8 +66,8 @@ SISTEMA:  Guarda cfg.mMax = feedback actual, detiene motor
 ### Paso 5 — Límite mínimo del actuador
 ```
 SERIAL TX: "Paso 5/6: Use MOVEREV para ir al tope de desaceleración.
-            Cuando llegue, envíe SETMIN"
-TÉCNICO:  Envía → MOVEREV (motor retrocede)
+             Cuando llegue, envíe SETMIN"
+TÉCNICO:  Envía → MOVEREV (motor retrocede hacia desaceleración, PWM=180)
           Envía → SETMIN al llegar al tope opuesto
 SISTEMA:  Guarda cfg.mMin, detiene motor
           "mMin = XXX guardado."
@@ -76,9 +76,9 @@ SISTEMA:  Guarda cfg.mMin, detiene motor
 ### Paso 6 — Guardar o tunear
 ```
 SERIAL TX: "Paso 6/6: Envíe SAVE para guardar en EEPROM
-            o TUNE para auto-ajustar PID primero."
+             o TUNE para auto-ajustar PID primero."
 TÉCNICO:  Envía → SAVE  (guarda límites, KP/KI/KD por defecto)
-               o → TUNE  (ejecuta auto-tuning antes de guardar)
+                o → TUNE  (ejecuta auto-tuning antes de guardar)
 ```
 
 ---
@@ -181,6 +181,8 @@ Solo se energiza cuando el operador mueve el pedal más allá del umbral de reac
 ### Caso 4: Captura de límites del actuador
 - En pasos 4-5, mover a topes y enviar `SETMAX`/`SETMIN`
 - **PASA si:** `mMax > mMin` con diferencia > 50
+- **Verificar:** `MOVEFWD` y `MOVEREV` usan PWM=180 (antes era 140)
+- **Verificar:** En paso 5 (LIMIT_DECEL), `MOVEREV` muestra mensaje "Moviendo hacia limite de ACELERACION..."
 
 ### Caso 5: SAVE en EEPROM
 - En paso 6, enviar `SAVE`
@@ -216,7 +218,7 @@ Solo se energiza cuando el operador mueve el pedal más allá del umbral de reac
   5. **Verificación:** El motor debe continuar moviéndose hacia adelante por al menos 150ms antes de responder a MOVEREV.
   6. Esperar 150ms, luego enviar `MOVEREV` nuevamente.
   7. **PASA si:** El motor ahora se mueve hacia atrás, confirmando que el dead-time se completó.
-- **PASA si:** El motor mantiene la dirección anterior por ≥150ms después del cambio de dirección solicitado, confirmando el dead-time anti shoot-through de 150ms.
+  8. **PASA si:** El motor mantiene la dirección anterior por ≥150ms después del cambio de dirección solicitado, confirmando el dead-time anti shoot-through de 150ms.
 
 ### Caso 12: Validación Overcurrent y STALL
 - **Objetivo:** Verificar que la detección de sobrecorriente (threshold 850) y stall (threshold 950) funcionen correctamente sin falsos positivos en operación normal.
@@ -247,7 +249,7 @@ Solo se energiza cuando el operador mueve el pedal más allá del umbral de reac
 - **PASA si:** El motor responde a ambos comandos FWD y REV con movimiento real (no solo ruido audible), confirmando que la salida PWM funciona en ambos pines.
 
 ### Caso 14: Validación calibración overcurrent robusta (Fix v2.0.16)
-- **Objetivo:** Verificar que la calibración de overcurrent rechace lecturas inválidas (sensor desconectado) y que el setup tenga timeout.
+- **Objetivo:** Verificar que la calibración de overcurrent rechaza lecturas inválidas (sensor desconectado) y que el setup tenga timeout.
 - **Procedimiento:**
   1. Desconectar sensor de corriente del pin A2 (o dejar flotante).
   2. Resetear el sistema (power cycle o botón reset).
@@ -289,3 +291,42 @@ Solo se energiza cuando el operador mueve el pedal más allá del umbral de reac
   - Comandos `CAL`, `RST`, `TUNE`, `OCAL` se procesan inmediatamente.
   - Reportes PID aparecen cada 250ms sin interrupciones.
   - No hay mensajes `MOVER: vel=...` ni `[STALL] raw=...` en operación normal.
+
+### Caso 17: Verificación de VEL_TEST y mensaje MOVEREV en calibración (pasos 4-5)
+- **Objetivo:** Confirmar que el PWM de calibración se incrementó de 13.7% a 17.6% duty cycle (VEL_TEST 140 → 180) y que el mensaje de MOVEREV en el paso 5 indica correctamente "Moviendo hacia limite de ACELERACION..." (antes mostraba "Moviendo hacia limite de DESACELERACION..." incorrecto).
+- **Procedimiento:**
+  1. Completar calibración interactiva hasta el paso 4 (Límite máximo del actuador) y enviar `SETMAX`.
+  2. Continuar al paso 5 (Límite mínimo del actuador) y enviar `MOVEREV`.
+  3. **Verificación del PWM:** Observar que el duty cycle del PWM activo alcanza 17.6% (antes 13.7%). Esto se verifica midiendo con osciloscopio o con el mensaje de depuración de PWM en `main.cpp` línea 42.
+  4. **Verificación del mensaje:** El log serial debe mostrar exactamente: `Moviendo hacia limite de ACELERACION...` cuando se ejecuta `MOVEREV` en el paso 5. Antes el mensaje era `Moviendo hacia limite de DESACELERACION...` (incorrecto).
+  5. **PASAR:** 
+     - El duty cycle efectivamente es 17.6% (dentro de ±0.5% tolerancia).
+     - El mensaje impreso coincide con "ACELERACION" y no con "DESACELERACION".
+     - El motor se mueve en la dirección de aceleración (según la dirección configurada en el paso 3).
+- **Restricciones MISRA/ISO:** 
+  - No se usa asignación dinámica ni llamadas a funciones prohibidas.
+  - El mensaje se genera con `Serial.print(F("Moviendo hacia limite de ACELERACION..."))` asegurando almacenamiento en flash.
+- **Criterio de aceptación:** 
+   - Todos los checks de PWM y mensaje se cumplen en al menos 5 ejecuciones consecutivas.
+   - No se generan falsos positivos en otros comandos.
+
+### Caso 18: Auto-calibración completa (ACAL)
+- **Objetivo:** Verificar que el comando `ACAL` ejecuta calibración completa automática usando overcurrent para detectar topes mecánicos, requiriendo solo 2 confirmaciones del usuario (pedal min/max).
+- **Procedimiento:**
+  1. Asegurar que overcurrent esté calibrado (`OCAL` previo, nominal ~210, sigma ~19).
+  2. Enviar `ACAL` → sistema entra en modo auto-calibración.
+  3. **Paso 1/5:** Colocar pedal en RALENTI, enviar `OK` → `pMin` guardado.
+  4. **Paso 2/5:** Colocar pedal a MÁXIMO, enviar `OK` → `pMax` guardado.
+  5. **Paso 3/5:** Sistema prueba FWD 500ms y REV 500ms, detecta cuál aumenta feedback → imprime "Direccion: FWD ACELERA" o "Direccion: REV ACELERA".
+  6. **Paso 4/5:** Mueve hacia aceleración (PWM=180) hasta detectar overcurrent → guarda `mMax` (tope ACELERACIÓN).
+  7. **Paso 5/5:** Mueve hacia desaceleración (dirección opuesta) hasta overcurrent → guarda `mMin` (tope DESACELERACIÓN).
+  8. Valida rangos (>50 unidades), guarda en EEPROM con `cv=MAGIC_NUMBER`.
+  9. Imprime "=== AUTO-CALIBRACION GUARDADA EN EEPROM ===".
+- **Verificaciones:**
+  - Solo 2 interacciones usuario (OK en pedal min/max).
+  - Dirección detectada correctamente (feedback aumenta en dirección de aceleración).
+  - Topes detectados por overcurrent (no por timeout).
+  - EEPROM contiene pMin/pMax/mMin/mMax/accelIsFwd/cv=111.
+  - Al reiniciar, sistema entra en OPERATION directamente (no CAL).
+- **PASAR si:** Todos los pasos completan sin intervención manual en pasos 3-5, EEPROM válida tras power-cycle.
+- **Restricciones MISRA/ISO:** Sin asignación dinámica, watchdog reseteado en bucles largos, dead-time 150ms respetado en cambios de dirección.

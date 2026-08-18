@@ -12,8 +12,15 @@ constexpr uint8_t OC_PIN            = A2;
 constexpr uint16_t OC_SAMPLES       = 64;
 constexpr uint16_t OC_K_SIGMA       = 0;
 constexpr uint16_t OC_THRESHOLD_FIXED = 850;
-constexpr uint16_t EE_NOMINAL_ADDR  = 0x00;
-constexpr uint16_t EE_SIGMA_ADDR    = 0x02;
+
+// Config (main.cpp) se persiste con eepromGetSafe/PutSafe(0, cfg), ocupando
+// desde el addr 0. La calibracion de sobrecorriente NO puede empezar ahi:
+// colisionaban en addr 0-3 y cada guardado de una corrompia a la otra.
+// 64 bytes deja margen de sobra (Config actual < 30 bytes) antes de la
+// region de sobrecorriente. Ver static_assert junto a `struct Config` en main.cpp.
+constexpr uint16_t EE_CONFIG_RESERVED_BYTES = 64;
+constexpr uint16_t EE_NOMINAL_ADDR  = EE_CONFIG_RESERVED_BYTES;
+constexpr uint16_t EE_SIGMA_ADDR    = EE_CONFIG_RESERVED_BYTES + 2;
 constexpr uint16_t OC_MIN_THRESHOLD = 950;
 
 void oc_loadCalibration();

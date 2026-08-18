@@ -2,64 +2,84 @@
 #define MOCK_ARDUINO_H
 
 #include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
+#include <Arduino.h>
+#include "EEPROM.h"
+#include "motor_types.h"
+#include <cstdio>
 
-#define HIGH 1
-#define LOW 0
-#define INPUT 0
-#define OUTPUT 1
-#define INPUT_PULLUP 2
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+// Mock EEPROM
+extern uint8_t mock_eeprom[1024];
+void mock_eeprom_init(void);
+
+// Arduino function mocks
+extern uint16_t mock_analog_read_value;
+extern unsigned long mock_millis_value;
+extern unsigned long mock_micros_value;
+
+int analogRead(uint8_t pin);
+unsigned long millis(void);
+unsigned long micros(void);
+
+// EEPROM class mocks
+uint8_t EEPROMClass_read(int address);
+void EEPROMClass_write(int address, uint8_t value);
+void EEPROMClass_update(int address, uint8_t value);
+
+// Safe state mock
+extern bool mock_safe_state_called;
+void safeState(void);
+
+// Motor direction mock (for overcurrent)
+extern ActuatorDirection sysState_currentDirection;
+
+// Serial mock
+extern char mock_serial_buffer[256];
+void Serial_begin(unsigned long baud);
+void Serial_print(const char* str);
+void Serial_println(const char* str);
+void Serial_print_int(int val);
+void Serial_print_uint16(uint16_t val);
+
+// F() macro mock
+#define F(x) x
+
+// Pin definitions for native test
 #define A0 14
 #define A1 15
 #define A2 16
 #define A3 17
 #define A4 18
 #define A5 19
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void pinMode(uint8_t pin, uint8_t mode);
-void digitalWrite(uint8_t pin, uint8_t val);
-int digitalRead(uint8_t pin);
-int analogRead(uint8_t pin);
-void analogWrite(uint8_t pin, int val);
-unsigned long millis(void);
-unsigned long micros(void);
-void delay(unsigned long ms);
-void delayMicroseconds(unsigned int us);
-
-#define F(x) x
+#define A6 20
+#define A7 21
 
 #ifdef __cplusplus
 }
 #endif
 
-#ifdef __cplusplus
-class Serial_ {
-public:
-    void begin(unsigned long baud) { (void)baud; }
-    void print(const char* s) { (void)s; }
-    void println(const char* s) { (void)s; }
-    void print(int n) { (void)n; }
-    void println(int n) { (void)n; }
-    void print(unsigned int n) { (void)n; }
-    void println(unsigned int n) { (void)n; }
-    void print(long n) { (void)n; }
-    void println(long n) { (void)n; }
-    void print(unsigned long n) { (void)n; }
-    void println(unsigned long n) { (void)n; }
-    void print(float f, int d) { (void)f; (void)d; }
-    void println(float f, int d) { (void)f; (void)d; }
-    int available() { return 0; }
-    int read() { return -1; }
-    size_t write(uint8_t c) { (void)c; return 1; }
+// Global EEPROM instance for Arduino compatibility (C++ linkage)
+extern EEPROMClass EEPROM;
+
+// Serial class mock for Arduino compatibility
+struct MockSerial {
+    void begin(unsigned long baud) { Serial_begin(baud); }
+    void print(const char* str) { Serial_print(str); }
+    void println(const char* str) { Serial_println(str); }
+    void print(int val) { Serial_print_int(val); }
+    void print(uint16_t val) { Serial_print_uint16(val); }
+    void println(int val) { Serial_print_int(val); Serial_println(""); }
+    void println(uint16_t val) { Serial_print_uint16(val); Serial_println(""); }
+    void print(float val, int decimals) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.*f", decimals, val);
+        Serial_print(buf);
+    }
 };
 
-extern Serial_ Serial;
-#endif
+extern MockSerial Serial;
 
-#endif
+#endif // MOCK_ARDUINO_H

@@ -1,0 +1,57 @@
+{
+  "_comment": "Archivo unico de configuracion de hardware. Fuente de verdad: reemplaza las copias duplicadas que existian en ai/ y .opencode/ (que habian divergido entre si).",
+  "_decision": "MCU unico y definitivo: Arduino Nano ATmega328P. La placa ya esta fabricada con este micro. No hay migracion a ESP32-S3 ni a Rust en ningun horizonte: se descarto por no ser seguro en esta clase de microcontroladores (8-bit, recursos minimos, firmware de seguridad funcional para maquinaria pesada real). No reabrir esta discusion ni agregar perfiles de otro target sin que el usuario lo pida explicitamente.",
+
+  "mcu": "ATmega328P",
+  "label": "Arduino Nano — ATmega328P",
+  "framework": "arduino",
+  "platform": "atmelavr",
+  "toolchain": "avr-gcc",
+  "clock_mhz": 16,
+  "memory": {
+    "flash_kb": 30,
+    "sram_bytes": 2048,
+    "eeprom_bytes": 1024
+  },
+  "platformio_env": {
+    "board": "nanoatmega328",
+    "framework": "arduino",
+    "upload_protocol": "arduino",
+    "monitor_speed": 115200,
+    "build_flags": ["-std=gnu++17", "-Wall", "-Wextra", "-Werror", "-Os"],
+    "_nota_cpp": "avr-gcc (toolchain-atmelavr) soporta hasta C++17. C++20 NO esta disponible en esta toolchain — ver platformio.ini real.",
+    "lib_deps": ["EEPROM"]
+  },
+  "coding_rules": {
+    "file_extension": ".cpp / .h (NUNCA .ino)",
+    "timing": "millis() / micros() — prohibido delay() en loop() o cualquier ruta que corra con el motor habilitado",
+    "memory": "Zero Dynamic RAM post-init — prohibido String, new, malloc, free",
+    "isr_variables": "volatile obligatorio en variables compartidas con ISR",
+    "standard": "MISRA C++:2008 (subconjunto) — static_cast explicito, llaves {} obligatorias, tipos fijos <cstdint>",
+    "watchdog": "wdt_enable(WDTO_2S) en setup() (bootloader-safe: limpiar MCUSR/WDTCSR primero), wdt_reset() en loop()"
+  },
+  "pins": {
+    "PIN_POT_OP":    "A0 — Potenciometro pedal operador",
+    "PIN_POT_FEED":  "A1 — Potenciometro feedback actuador",
+    "PIN_IS_SENSE":  "A2 — Sensor de corriente IS del BTS7960",
+    "PIN_EN":        "D8 — Enable del puente H (R_EN y L_EN unidos)",
+    "PIN_L_PWM":     "D9  — PWM canal izquierdo (Timer1 / OC1A)",
+    "PIN_R_PWM":     "D10 — PWM canal derecho (Timer1 / OC1B)"
+  },
+  "timer1_pwm": {
+    "modo": "Fast PWM, WGM13:10 = 1110 (modo 14, TOP=ICR1) — NO modo 15 (WGM10=1, TOP=OCR1A): OCR1A es a la vez el duty de L_PWM, rompe el canal",
+    "top": "ICR1 = 799 (10-bit)",
+    "prescaler": "CS10=1 (sin prescaler)",
+    "frecuencia": "16MHz / (800*1) = 20 kHz",
+    "limite_driver": "IBT-2/BTS7960 admite maximo 25kHz (datasheet). NUNCA configurar por encima — a 62.5kHz el driver malfunciona y puede resetear el MCU (incidente v2.0.23, corregido en v2.0.24)",
+    "escritura_pwm": "usar pwmWriteMotor() (escribe OCR1A/OCR1B escalado 0-255 -> 0-799), NO analogWrite() (asume TOP=255 y limita la autoridad real a ~32%)"
+  },
+  "peripherals": {
+    "motor_driver": "IBT-2 (BTS7960) — 24Vcc — Puente H dual 43A",
+    "motor_type": "DC brushed — cuerpo de aceleracion",
+    "machine": "Excavadora Hyundai R250 LC7"
+  },
+  "test_framework": "Unity (PlatformIO native env, mocks en test/mock_arduino.*)",
+  "src_dir": "src/",
+  "test_dir": "test/"
+}

@@ -5,7 +5,7 @@
  * Zero Dynamic RAM: solo tipos fijos, sin alloc/delete.
  * Framework-agnostic: no depende de Arduino.h, solo de <stdint.h> y <stdlib.h>.
  *
- * MCU target: ATmega328P (Arduino Nano) / ESP32-S3
+ * MCU target: ATmega328P (Arduino Nano) — unico target
  * Framework: agnostico
  *
  * v2.0: KP/KI/KD pasan de constexpr a parámetros runtime en PidInput.

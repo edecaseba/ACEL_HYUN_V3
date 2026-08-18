@@ -1,4 +1,39 @@
 # CHANGELOG — ACEL_HYUN_V3
+## v2.0.24 — 2026-08-17
+### Fix crítico: reset del micro al arrancar el motor
+- ✅ **Timer1 PWM revertido a 20kHz (10-bit, TOP=ICR1=799)**: v2.0.23 había subido el PWM del puente H a 62.5kHz (modo 8-bit) para que `analogWrite()` tuviera rango completo. El IBT-2/BTS7960 soporta máx 25kHz (datasheet, `skill-ibt2.md`) — a 62.5kHz el driver malfunciona y genera transitorios que resetean el ATmega328P justo al arrancar el PWM. Causa raíz más probable del síntoma "el micro se reinicia".
+- ✅ **Bug de modo Timer1 (WGM) corregido**: la config previa (incluso antes de v2.0.23) armaba modo 15 (TOP=OCR1A) en vez de modo 14 (TOP=ICR1). OCR1A es también el duty del canal L_PWM (pin 9), así que el período del PWM dependía del propio duty de un canal — fuente de glitches. Corregido a modo 14 real.
+- ✅ **`pwmWriteMotor()` reemplaza `analogWrite()` en `mover()`**: escribe el duty 0-255 escalado al TOP real (799) vía `OCR1A`/`OCR1B` directo. `analogWrite()` escribía 0-255 sin escalar contra un TOP=799, limitando la autoridad real del motor a ~32% de duty máximo.
+- ✅ **Colisión EEPROM corregida**: `EE_NOMINAL_ADDR`/`EE_SIGMA_ADDR` (calibración de sobrecorriente) arrancaban en addr 0x00, la misma dirección donde `eepromGetSafe/PutSafe(0, cfg)` persiste la config general. Cada guardado de una corrompía la otra (ej. `cfg.pMin` corrupto → setpoint erróneo al bootear → PID al máximo desde el primer ciclo). Movida la región de sobrecorriente a partir de addr 64, con `static_assert(sizeof(Config) <= EE_NOMINAL_ADDR)` para evitar que vuelva a colisionar.
+- ✅ **Soft-start no bloqueante reintroducido**: `aplicarRampa()` limita el salto de PWM a 25/ciclo de `loop()` (sin `delay()`, no interfiere con el watchdog). v2.0.23 había sacado el soft-start anterior por usar `delay()` bloqueante; esta versión resuelve el problema original sin bloquear. Se omite durante `tuningLimitCycle` (el auto-tune bang-bang necesita conmutación inmediata).
+- ✅ **Diagnóstico de causa de reset**: `MCUSR` se lee y reporta por Serial (`BROWNOUT`/`WATCHDOG`/`EXTERNAL`/`POWER-ON`) antes de limpiarse en `setup()`, para confirmar en banco cuál de estas causas está disparando el reset real.
+- ✅ **Verificación**: `pio run -e nanoatmega328` limpio con `-Werror` (RAM 29.0%, Flash 59.1%). `pio test -e native`: 38/38 PASS.
+
+## v2.0.23 — 2026-07-22
+### Feature: Auto-calibración completa (ACAL) + Fixes estabilidad
+- ✅ **Comando `ACAL`**: Auto-calibración completa usando overcurrent para detectar topes mecánicos
+  - Paso 1/5: Pedal RALENTI → OK
+  - Paso 2/5: Pedal MÁXIMO → OK
+  - Paso 3/5: Detecta dirección aceleración (FWD/REV 500ms cada uno)
+  - Paso 4/5: Busca tope ACELERACIÓN hasta overcurrent (stall mecánico)
+  - Paso 5/5: Busca tope DESACELERACIÓN hasta overcurrent
+  - Guarda automáticamente en EEPROM: pMin/pMax/mMin/mMax/accelIsFwd/cv=MAGIC_NUMBER
+- ✅ **Watchdog bootloader-safe**: Secuencia `WDTCSR` al inicio de `setup()` evita bucle de reset por bootloader
+- ✅ **`wdt_reset()` en `loop()` y calibración OC**: Evita reset cada 2s durante operaciones largas
+- ✅ **Timer1 modo 5 (8-bit, 62.5kHz)**: Compatible con `analogWrite()` nativo en pines 9/10
+- ✅ **Soft-start removido**: `delay()` bloqueaba watchdog; `analogWrite()` directo sin rampa
+- ✅ **Compilación**: RAM 29.0% (593/2048 B), Flash 58.8% (18062/30720 B)
+- ✅ **Tests unitarios**: 38/38 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 main)
+
+## v2.0.22 — 2026-07-22
+### Fix: Calibración interactiva - PWM y mensaje MOVEREV
+- ✅ **VEL_TEST 140 → 180** (línea 42 main.cpp): PWM de calibración subido de 13.7% a 17.6% duty cycle para vencer fricción estática en actuadores lentos
+- ✅ **Mensaje MOVEREV corregido en LIMIT_DECEL** (líneas 446-456): Ahora imprime "ACELERACION" correctamente (antes decía "DESACELERACION" incorrectamente). MOVEREV en paso 5 mueve hacia ACELERACIÓN (opuesto a MOVEFWD).
+- ✅ **Tests añadidos (8 nuevos en test_main.cpp):** VEL_TEST=180, mensajes MOVEREV/MOVEFWD en LIMIT_ACCEL/LIMIT_DECEL, firstMovementAfterStop behavior
+- ✅ **Mocks comunes creados:** test/mock_arduino.h/.cpp - EEPROM, analogRead, millis, micros, Serial, safeState
+- ✅ **Compilación**: RAM 28.1%, Flash 53.3% (dentro límites ATmega328P).
+- ✅ **Tests unitarios**: 38/38 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 main).
+
 ## v2.0.21 — 2026-07-16
 ### Mejora: Auto-tuning PID robusto para actuadores lentos
 - ✅ **Timeout extendido 30s → 90s**: permite completar 6 ciclos en actuadores lentos
@@ -89,6 +124,7 @@
 - ✅ **Mantener protección de tiempo y delta solo cuando hay movimiento activo**: se requieren al menos 500 ms y un cambio de ≥20 unidades en el feedback solo cuando `movementStarted == true`.
 - ✅ **Verificación MISRA/ISO**: se mantuvieron las comparaciones con tipos correctos y se evitó asignación dinámica.
 - ✅ **Pruebas unitarias**: se ejecutó `pio test` y todas pasaron (16/16).
+
 ## v2.0.10 — 2026-07-06
 ### Correcciones de calibración interactiva (movimiento y límites)
 - ✅ **Depuración de feedback**: se añadieron impresiones de valor crudo y filtrado del sensor de retroalimentación durante los comandos MOVEFWD y MOVEREV.
@@ -96,6 +132,7 @@
 - ✅ **Almacenamiento del feedback inicial**: se guarda el valor del filtro al iniciar el movimiento para calcular el delta correctamente.
 - ✅ **Verificación MISRA/ISO**: se corrigieron comparaciones de signo y se mantuvo el uso de variables estáticas, sin asignación dinámica ni accesos fuera de límites.
 - ✅ **Pruebas unitarias**: se ejecutó `pio test` y todas pasaron (16/16).
+
 ## v2.0.9 — 2026-07-06
 ### Correcciones de calibración interactiva y auto‑tuning
 - ✅ **Corrección de flujo de calibrado**: tras el comando `SAVE` se verifica la escritura en EEPROM y se asegura que `sysMode` quede en `OPERATION` y `calState` en `IDLE`.
@@ -103,6 +140,7 @@
 - ✅ **Condición de permiso para `TUNE` simplificada**: ahora solo se comprueba que `cv == MAGIC_NUMBER`, permitiendo el auto‑tuning inmediatamente después de una calibración exitosa.
 - ✅ **Verificación MISRA/ISO**: se añadió `#include <avr/wdt.h>` en `overcurrent.cpp` y se mantuvo el uso de variables estáticas, sin asignación dinámica ni accesos fuera de límites.
 - ✅ **Pruebas unitarias**: se ejecutó `pio test` y todas pasaron (16/16).
+
 ## v2.0.8 — 2026-07-04
 ### Visualización de valores de sensor durante calibrado
 - ✅ **Mostrar valor del pedal** en los pasos de `pMin` y `pMax` (comando OK) indicando el valor filtrado del pedal que se está guardando.
@@ -110,136 +148,6 @@
 - ✅ **Mostrar ambos valores** en el resguardo final (comando SAVE) para confirmar los rangos guardados.
 - ✅ **Verificación MISRA/ISO**: se usan solo variables estáticas, impresión con `Serial.print` y `F()`, sin asignación dinámica ni accesos fuera de límites.
 - ✅ **Pruebas unitarias**: se ejecutó `pio test` y todas pasaron (16/16).
-## ESTADO ACTUAL (2026-06-30)
-**v2.0.2 — MCU:** Arduino Nano ATmega328P · PlatformIO · Arduino Framework
-**Target alternativo:** ESP32-S3 @240MHz · ESP-IDF v5.5.3 · FreeRTOS · C++20
-
-### Archivos base
-`src/main.cpp` `src/pid_controller.h` `src/overcurrent.h` `src/overcurrent.cpp` `test/test_pid.cpp` `test/test_overcurrent.cpp` `test/TEST_PROCEDURE.md`
-`README.md` `platformio.ini` `gitea-init.sh` `.vscode/tasks.json`
-`ai/{persona,hardware_target,code_rules}.md` `AGENTS.md` `opencode.json`
-`.opencode/skills/{skill-ibt2,skill-iso-safety}.md`
-
-## ACTUAL (2026-06-24)
-**v2.0.0 — Calibración Interactiva + Auto-tuning PID + Control Asentado**
-
-### Cambios en v2.0.0
-✅ **Calibración interactiva por comando serial**: 6 pasos guiados, técnico confirma cada
-    posición manualmente (OK/FWD/FWD/REV/STOP/DIR/MOVEFWD/MOVEREV/SETMAX/SETMIN/SAVE)
-✅ **Auto-tuning PID por relay** (Åström-Hägglund): comando `TUNE` oscila el actuador,
-    mide Tu/Ku, calcula KP/KI/KD vía Ziegler-Nichols, guarda en EEPROM
-✅ **Control con asentamiento (anti-ronroneo)**: motor completamente apagado cuando el
-    pedal está quieto; histéresis 3/6, timer 100ms
-✅ **KP/KI/KD runtime**: migrados de `constexpr` a campo en `PidInput`, almacenados en
-    EEPROM dentro del struct `Config`
-✅ **Dirección dinámica**: `cfg.accelIsFwd` reemplaza `INVERTIR_GIRO_MOTOR` compile-time;
-    configurable por serial (`DIR FWD ACEL` / `DIR REV ACEL`)
-✅ **Comandos seriales expandidos**: CAL, OK, FWD, REV, STOP, DIR, MOVEFWD, MOVEREV,
-    SETMAX, SETMIN, SAVE, TUNE, RST
-✅ **Reporte serial en operación**: SetP/Act/Err + [ASENTADO] + KP/KI/KD muestra cada 250ms
-✅ **Tests Unity actualizados** (15 tests, mismos asserts con nueva firma)
-✅ **TEST_PROCEDURE.md** reescrito: 10 casos de prueba + referencia rápida de comandos
-
-### Funcionalidades preservadas de v1.5.0
-✅ PID con anti-windup, zona muerta, derivada normalizada por Ts
-✅ Filtro EMA anti-aliasing
-✅ Dead-time 150ms (anti shoot-through)
-✅ Safe State por stall / pérdida de señal
-✅ Zero Dynamic RAM Post-Init
-✅ Config persistente en EEPROM con validación por magic number
-
-### Cambios en v1.5.0 (Hardware Mínimo)
-✅ **BOM reducida**: eliminados ferritas (F2-F5), snubbers (R_snub + C_snub), common mode choke (L1), capacitores extra (C2-C4, C4A, C5A, C5B), diodos clamp (D2, D3), reset externo (SW1 + R5), resistor VIN (R4), regulador 3.3V (U2)
-✅ **Protección mínima**: solo F1(PTC) + D1(TVS SMCJ28CA) + C1(470µF) en entrada 24V
-✅ **ISO 13766 simplificada**: eliminados requisitos de ferritas, snubbers y common mode choke
-✅ **ISO 7637-2 simplificada**: solo TVS + C1 bulk + filtrado digital EMA
-✅ **PCB_DESIGN_GUIDE.md** actualizado: esquemático reducido, layout simplificado, jumpers reducidos de 8 a 4
-✅ **KiCAD_SETUP.md** actualizado: netlist sin componentes eliminados
-✅ **code_rules.md** actualizado: sin requisitos de ferritas/snubbers en EMI
-✅ Hardware funcionalmente idéntico a versión L298N sin componentes EMI extra
-
-### Funcionalidades
-✅ PID integral con anti-windup, slew rate, reset por fricción
-✅ Filtro EMA anti-aliasing (ISO 7637-2)
-✅ Dead-time 150ms (anti shoot-through)
-✅ Safe State ante pérdida de señal / sobrecorriente
-✅ Safe State obligatorio antes de OTA (ESP32-S3)
-✅ Watchdog con Safe State + reboot + registro (ESP32-S3)
-✅ Zero Dynamic RAM Post-Init (ambos targets)
-✅ PSRAM Octal: alloc solo en init, alineación 4/8/16 bytes (ESP32-S3)
-✅ Pool universal de 7 agentes intercambiables por cuota
-✅ Tests Unity (16/16 PASS)
-✅ Gitea→GitHub push mirror (sync_on_commit)
-✅ Placa 1 sola cara (B.Cu), 100% THT, XL4005 module, IBT-2 module
-✅ Contexto agnóstico dual-target: cambiar `active_target` switchea MCU+framework+reglas
-
-### Pendiente
-⬜ `test/TEST_PROCEDURE.md` — procedimiento de prueba en hardware
-⬜ Validación de parámetros PID en hardware real
-
-### Equipo
-| Agente | Modelo |
-|--------|--------|
-| orchestrator | Gemini 3.1 Pro |
-| planner | North Mini Code Free |
-| coder | DeepSeek V4 Flash Free |
-| reviewer | Mimo V2.5 Free |
-| tester | North Mini Code Free |
-| documenter | Mimo V2.5 Free |
-| explore | Gemini 3.5 Flash |
-
-> Pool universal: cualquier agente puede tomar el rol de otro si falla por cuota (429). Cadena: planner→coder→reviewer→explore→tester→documenter→orchestrator.
-
-## v2.0.1 — 2026-06-28
-### Correcciones de cumplimiento MISRA/ISO y seguridad
-- ✅ Eliminado uso de `String` y `delay()` (no se encontraron en código fuente).
-- ✅ Reemplazado macros sin tipo por `constexpr`/`const` (ya estaban como `constexpr`).
-- ✅ Protegido acceso a EEPROM con funciones `eepromPutSafe`/`eepromGetSafe` que verifican límites.
-- ✅ Añadida regla explícita de seguridad en ISR a `ai/persona.md`.
-- ✅ Habilitado `-Werror` en `platformio.ini` (tratamiento de warnings como errores).
-- ✅ Restringido permiso `external_directory` en `opencode.json` a rutas necesarias (`src/`, `test/`, `.opencode/`, `ai/`).
-- ✅ Actualizados todos los agentes del meta‑orquestador con plantillas válidas y permisos alineados a `AGENTS.md`.
-- ✅ Creado `.opencode/project_state.json` y `.opencode/session_log.md` para seguimiento de estado.
-- ✅ Compilación exitosa para objetivo Arduino Nano ATmega328P (RAM 25%, Flash 41.7%).
-- ✅ Tests unitarios siguen pasando (ver `pio test`).
-
-## v2.0.2 — 2026-06-30
-### Nuevas funcionalidades
-- **Detección dinámica de sobre‑corriente con auto‑calibrado**:
-  * Hardware: pull‑down 10 kΩ + desacoplador 100 nF en A2; diodos SR2100MIC forman un OR pasivo entre RIS y LIS del IBT‑2.
-  * Software: nuevos archivos `overcurrent.h/.cpp`; modificaciones en `main.cpp` para cargar calibrado, ejecutar rutina de calibrado (comando serial `C`) y chequeo continuo (`oc_checkOverCurrent()`).
-  * Umbral de detección: `U = nominal + K·σ` (K configurable, valor por defecto 4).
-  * Los valores nominal y sigma se guardan en EEPROM (direcciones 0x00 y 0x02) y persisten entre ciclos de energía.
-  * Comando serial `C` (o `c`) dispara un nuevo calibrado; el calibrado automático se ejecuta en el primer arranque si la EEPROM está virgen.
-- **Pruebas unitarias** añadidas (`test/test_overcurrent.cpp`) que verifican carga de valores por defecto, cálculo correcto de media y sigma, y funcionamiento del umbral.
-- **Procedimiento de prueba** actualizado (`TEST_PROCEDURE.md`) con pasos de hardware y validación de la detección de sobre‑corriente.
-- **Impacto en recursos** (Arduino Nano ATmega328P):
-  * RAM: +≈1 % (≈20 bytes adicionales).
-  * Flash: +≈1.2 KB (código de calibrado y chequeo).
-
-### Funcionalidades preservadas
-- Todas las características existentes de v2.0.0 y v2.0.1 (PID con anti‑windup, zona muerta, filtro EMA, dead‑time 150 ms, control con asentamiento, watchdog, safe‑state por sobrecorriente/pérdida de señal, etc.) permanecen sin cambios.
-
-## v2.0.3 — 2026-09-16
-### Correcciones de rendimiento y seguridad
-- Eliminado uso de `delay()` en la calibración de sobre‑corriente (overcurrent.cpp) y reemplazado por espera no bloqueante basada en `micros()`.
-- Agregado `#include <math.h>` para uso de `sqrt()`.
-- Mejorado cálculo de varianza para evitar subdesbordamiento usando enteros con signo.
-- Añadido pequeño `yield()` en `loop()` (delayMicroseconds(100)) para liberar tiempo de UART y evitar sobrecarga del buffer serial.
-- Todas las pruebas unitarias continúan pasando.
-
-## v2.0.4 — 2026-09-16
-## v2.0.5 — 2026-07-04
-### Corrección de calibración interactiva
-- ✅ **Corrección de calibración interactiva**: el comando `OK` ahora procesa inmediatamente la lectura del pedal y avanza al siguiente paso, eliminando la espera inesperada que ocurría cuando `tickCalibration` no se ejecutaba de inmediato.
-- Se modificó `comandoOK()` para leer y guardar `pMin`/`pMax` y avanzar el estado sin depender de `tickCalibration()`.
-- Se ajustó `tickCalibration()` para que sea no‑op en los estados `PEDAL_MIN_READ` y `PEDAL_MAX_READ`, evitando procesamiento duplicado.
-- Se verificó la compilación y carga en Arduino Nano ATmega328P; los tests unitarios existentes continúan pasando.
-### Configuración de pines sin uso
-- Añadida función `configurarPinesSinUso()` que pone en `INPUT_PULLUP` los pines digitales no utilizados (D2‑D7, D11‑D13) y asegura que los pines usados queden en estado correcto.
-- Llamada desde `setup()` antes de `initMotorHardware()`.
-- Los pines analógicos A6 y A7 se dejan tal cual (pull‑down externo según indicación).
-- Todas las pruebas unitarias continúan pasando (salvo problemas conocidos en el entorno de prueba externos al código).
 
 ## v2.0.6 — 2026-07-04
 ### Corrección de calibración interactiva (case‑insensitive)
@@ -273,3 +181,24 @@
 - Dead-time: 150ms obligatorio en cambio pin PWM
 - Overcurrent: calibración automática + threshold fijo 850 + timeout 5s setup
 - ISO compliance: 13849-1 Cat.2/PL=d, 7637-2 (TVS+EMA), 13766
+
+(End of file - total 275 lines)
+
+## v2.0.22 — 2026-07-22
+### Changes:
+- **VEL_TEST 140 → 180** (línea 42 main.cpp): PWM de calibración subido de 13.7% a 17.6% duty cycle para vencer fricción estática en actuadores lentos
+- **Mensaje MOVEREV corregido en LIMIT_DECEL** (líneas 446-456): Ahora imprime "ACELERACION" correctamente (antes decía "DESACELERACION" incorrectamente). MOVEREV en paso 5 mueve hacia ACELERACIÓN (opuesto a MOVEFWD).
+- **Tests añadidos (8 nuevos en test_main.cpp):**
+  - test_vel_test_is_180_in_mover_during_calibration
+  - test_moverev_message_in_limit_decel_says_aceleracion
+  - test_moverev_message_in_limit_accel_says_aceleracion
+  - test_movefwd_message_in_limit_decel_says_desaceleracion
+  - test_first_movement_after_stop_is_true_after_detener
+  - test_first_movement_after_stop_allows_immediate_movement
+  - test_first_movement_after_stop_resets_after_first_move
+  - test_calibration_vel_test_constant_value
+- **Mocks comunes creados:**
+  - test/mock_arduino.h/.cpp - EEPROM, analogRead, millis, micros, Serial, safeState
+- **Métricas:**
+  - Tests: 38/38 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 main)
+  - Compilación FW: RAM 28.1%, Flash 53.3% (dentro límites ATmega328P).
