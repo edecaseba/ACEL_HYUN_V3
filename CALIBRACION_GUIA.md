@@ -41,9 +41,13 @@ Herramientas → Velocidad → 115200  // IMPORTANTE: debe coincidir con firmwar
   - **Fin de línea: "Nueva línea" (NL)** o "Ambos (NL & CR)"
   - **Codificación: UTF-8**
 
+Al bootear, el firmware imprime la causa del reset anterior (`Reset cause (MCUSR): 0x.. ...`). En un arranque normal por primera vez debería decir `POWER-ON`; si dice `BROWNOUT` o `WATCHDOG` de forma repetida, hay un problema de alimentación o de firmware que hay que resolver antes de calibrar (ver sección 9).
+
 ---
 
-## 3. Secuencia de Calibración Completa
+## 3. Calibración Manual (paso a paso, control total)
+
+Elegí este camino si preferís posicionar el actuador vos mismo en cada tope, o si `ACAL` (sección 4) falla por algún motivo.
 
 ### Paso 0: Verificar Comunicación
 Al abrir el monitor serie deberías ver:
@@ -225,16 +229,56 @@ Envie TUNE para auto-ajustar PID, o cambie a operacion normal.
 
 ---
 
-## 4. Auto-Tuning PID (Opcional pero Recomendado)
+## 4. Auto-Calibración (ACAL) — alternativa rápida, sin buscar los topes a mano
 
-El auto-tuning calcula los parámetros PID óptimos para tu actuador específico.
+`ACAL` calibra el pedal igual que el modo manual (2 pasos con `OK`), pero después busca los topes mecánicos del actuador **sola**, moviendo el motor hasta que el sensor de sobrecorriente detecta que llegó al tope físico (stall). No hace falta usar `FWD`/`REV`/`MOVEFWD`/`MOVEREV`/`SETMAX`/`SETMIN` a mano.
 
-### 4.1 Ejecutar Auto-Tuning
+> **Requisito:** el sensor de corriente debe estar calibrado antes de correr `ACAL` (`oc_isCalibrated()`). El firmware lo calibra solo al bootear si detecta que no lo está; si tenés dudas, corré `OCAL` primero con el motor parado. Si el sensor A2 no está calibrado, `ACAL` no va a detectar los topes y va a hacer timeout a los 30s en cada paso de búsqueda.
+
+### 4.1 Iniciar
+```
+ACAL
+```
+Respuesta:
+```
+Iniciando auto-calibracion completa...
+=== AUTO-CALIBRACION COMPLETA ===
+Paso 1/5: Coloque pedal en RALENTI y envie OK
+```
+
+### 4.2 Pedal mínimo y máximo (igual que manual)
+1. Pedal en ralentí → `OK` → guarda `pMin`, pasa a "Paso 2/5: Coloque pedal a MAXIMAS RPM y envie OK"
+2. Pedal a fondo → `OK` → guarda `pMax`, pasa a "Paso 3/5: Detectando direccion de aceleracion..."
+
+### 4.3 El resto es automático
+- **Paso 3/5:** el firmware prueba FWD 500ms y REV 500ms por su cuenta y decide cuál dirección acelera — no hay que hacer nada.
+- **Paso 4/5:** mueve el actuador hacia aceleración hasta que el sensor de corriente detecta el tope mecánico (overcurrent = stall) y guarda `mMax`.
+- **Paso 5/5:** mueve hacia desaceleración hasta el tope opuesto y guarda `mMin`.
+
+Cada paso 4/5 tiene un timeout de seguridad de 30s: si no encuentra el tope en ese tiempo, aborta con un mensaje de error y hay que terminar la calibración a mano (`CAL`, sección 3) o revisar el sensor de corriente (`OCAL`).
+
+### 4.4 Guardado automático
+Si `mMax`/`mMin` y `pMax`/`pMin` tienen un recorrido razonable (≥50 en ambos), guarda solo en EEPROM:
+```
+=== AUTO-CALIBRACION GUARDADA EN EEPROM ===
+Envie TUNE para auto-ajustar PID, o RST para operacion normal.
+```
+Si el recorrido detectado es demasiado chico (<50), imprime el error correspondiente y no guarda — revisar mecánicamente el actuador antes de reintentar.
+
+> ⚠️ **Durante los pasos 3/5-5/5 el motor se mueve solo, sin que vos lo controles paso a paso.** Valen las mismas precauciones de seguridad que en cualquier movimiento del actuador (sección 9): área libre y acceso a corte de emergencia antes de enviar `ACAL`.
+
+---
+
+## 5. Auto-Tuning PID (Opcional pero Recomendado)
+
+El auto-tuning calcula los parámetros PID óptimos para tu actuador específico. Sirve tanto después de una calibración manual (sección 3) como de una `ACAL` (sección 4).
+
+### 5.1 Ejecutar Auto-Tuning
 ```
 TUNE
 ```
 
-### 4.2 Qué Esperar
+### 5.2 Qué Esperar
 ```
 === AUTO-TUNING PID (LIMIT CYCLE) ===
 Rango: mMin=0 mMax=1019
@@ -261,7 +305,7 @@ Envie CAL para recalibrar limites, o RST para operacion normal.
 
 **El motor oscilará físicamente entre los topes calibrados (mMin ↔ mMax).** Esto es normal y necesario para medir la respuesta del sistema.
 
-### 4.3 Si Fallo la Validación (Amplitud Muy Pequeña)
+### 5.3 Si Fallo la Validación (Amplitud Muy Pequeña)
 ```
 TUNE: Oscilacion insuficiente. PID calculado pero no validado.
 Envia SAVEPID para guardar anyway, o CAL para recalibrar.
@@ -274,7 +318,7 @@ Guarda el PID calculado aunque no validó completamente.
 
 ---
 
-## 5. Operación Normal
+## 6. Operación Normal
 
 Después de calibrar (y opcionalmente tunear):
 ```
@@ -299,41 +343,47 @@ SetP:45 Act:45 Err:0 [ASENTADO] Kp:27.4 Ki:4.44 Kd:20.00
 
 ---
 
-## 6. Comandos de Referencia Rápida
+## 7. Comandos de Referencia Rápida
 
 | Comando | Descripción | Cuándo Usar |
 |---------|-------------|-------------|
-| `CAL` | Iniciar calibración interactiva | Primera vez / recalibrar |
-| `OK` | Confirmar posición actual | Pasos 1, 2 de calibración |
-| `FWD` / `REV` / `STOP` | Probar dirección motor | Paso 3 |
-| `DIR FWD ACEL` | R_PWM acelera | Paso 4 (si FWD acelera) |
-| `DIR REV ACEL` | L_PWM acelera | Paso 4 (si REV acelera) |
-| `MOVEFWD` / `MOVEREV` | Mover a tope | Pasos 4, 5 |
-| `SETMAX` | Guardar tope aceleración | Paso 4 |
-| `SETMIN` | Guardar tope desaceleración | Paso 5 |
-| `SAVE` | Guardar calibración en EEPROM | Paso 6 |
-| `TUNE` | Auto-tuning PID | Opcional (recomendado) |
-| `SAVEPID` | Guardar PID sin validar | Si TUNE falla validación |
+| `CAL` | Iniciar calibración manual interactiva | Primera vez / recalibrar con control total |
+| `ACAL` | Iniciar auto-calibración (pedal manual + topes automáticos por overcurrent) | Alternativa rápida a `CAL` |
+| `OK` | Confirmar posición actual | Pasos 1, 2 de `CAL` o `ACAL` |
+| `FWD` / `REV` / `STOP` | Probar dirección motor | Paso 3 de `CAL` |
+| `DIR FWD ACEL` | R_PWM acelera | Paso 4 de `CAL` (si FWD acelera) |
+| `DIR REV ACEL` | L_PWM acelera | Paso 4 de `CAL` (si REV acelera) |
+| `MOVEFWD` / `MOVEREV` | Mover a tope | Pasos 4, 5 de `CAL` |
+| `SETMAX` | Guardar tope aceleración | Paso 4 de `CAL` |
+| `SETMIN` | Guardar tope desaceleración | Paso 5 de `CAL` |
+| `SAVE` | Guardar calibración en EEPROM | Paso 6 de `CAL` (`ACAL` guarda solo al terminar) |
+| `TUNE` | Auto-tuning PID | Opcional (recomendado), después de `CAL` o `ACAL` |
+| `SAVEPID` | Guardar PID sin validar | Si `TUNE` falla validación |
 | `RST` | Reset fault / iniciar operación | Después de calibrar/tunear |
-| `OCAL` | Recalibrar sensor corriente | Si cambia hardware A2 |
+| `OCAL` | Recalibrar sensor corriente | Si cambia hardware A2, o antes de `ACAL` si hay dudas |
 
 > **Nota:** Los comandos **no requieren Enter** (se procesan tras 5ms de inactividad). Funcionan en mayúsculas/minúsculas.
 
 ---
 
-## 7. Solución de Problemas
+## 8. Solución de Problemas
 
 ### Motor no se mueve en FWD/REV
 - Verificar conexiones IBT-2 (R_PWM=D10, L_PWM=D9, EN=D8)
 - Verificar 24V en entrada IBT-2
 - Verificar `EN` en HIGH (LED encendido en IBT-2)
 
+### El micro se reinicia al arrancar el motor
+- Leer el mensaje `Reset cause (MCUSR)` que imprime el firmware al bootear: si dice `BROWNOUT`, sospechar de la alimentación 5V (XL4005) o de un pico de corriente de arranque; si dice `WATCHDOG`, es un problema de firmware.
+- Confirmar con osciloscopio que el PWM en D9/D10 conmuta a ~20kHz (no a otra frecuencia) — el IBT-2/BTS7960 admite máximo 25kHz, por encima de eso el driver malfunciona.
+- Ver `.claude/skills/motor-startup-diagnostics/SKILL.md` en el repo para el historial completo de este tipo de fallas ya investigadas.
+
 ### "Comando no reconocido"
 - Verificar baud rate 115200 en monitor serie
 - No escribir espacios extra: `DIR FWD ACEL` ✓ / `DIR FWD ACEL ` ✗
 
 ### TUNE no oscila / "Amplitud muy pequena"
-- Verificar que SETMAX/SETMIN capturaron topes reales
+- Verificar que SETMAX/SETMIN (o `ACAL`) capturaron topes reales
 - Aumentar `TUNE_PWM` en código (actual 180/255) si motor muy débil
 - Verificar que no hay fricción excesiva / atascamiento mecánico
 
@@ -345,23 +395,29 @@ SetP:45 Act:45 Err:0 [ASENTADO] Kp:27.4 Ki:4.44 Kd:20.00
 - Ejecutar `OCAL` con motor PARADO (`STOP` primero)
 - Verificar sensor A2 (ACS712/shunt) y conexiones
 
+### ACAL hace timeout buscando el tope (Paso 4/5 o 5/5)
+- Confirmar que el sensor de corriente está calibrado (`OCAL` con motor parado)
+- Si el actuador es muy débil o hay mucha fricción, puede no llegar a generar suficiente corriente para disparar la detección de stall — usar calibración manual (`CAL`, sección 3) en ese caso
+
 ---
 
-## 8. Archivos de Log / Debug
+## 9. Archivos de Log / Debug
 
-Para reportar problemas, captura la salida completa del monitor serie desde `CAL` hasta `RST` y adjunta:
+Para reportar problemas, captura la salida completa del monitor serie desde `CAL`/`ACAL` hasta `RST` y adjunta:
 - Versión firmware (ver `CHANGELOG.md`)
+- Mensaje `Reset cause (MCUSR)` de al bootear
 - Valores pMin/pMax/mMin/mMax capturados
-- Qué comando `DIR` usaste
+- Qué comando `DIR` usaste (si fue calibración manual)
 - Salida completa de `TUNE` si se ejecutó
 
 ---
 
-## 9. Seguridad
+## 10. Seguridad
 
-⚠️ **ANTES DE CALIBRAR:**
+⚠️ **ANTES DE CALIBRAR (manual o `ACAL`):**
 - Asegurar área libre alrededor del actuador/motor
 - Tener acceso rápido a botón de parada de emergencia / desconexión 24V
+- Con `ACAL`, el motor se mueve automáticamente buscando los topes mecánicos (pasos 3/5 a 5/5) sin intervención paso a paso — las mismas precauciones aplican con más razón
 - El sistema tiene Safe State automático (corta PWM + EN=LOW) ante:
   - Overcurrent (sensor A2)
   - Stall (corriente > 950 ADC)
@@ -369,5 +425,5 @@ Para reportar problemas, captura la salida completa del monitor serie desde `CAL
 
 ---
 
-**Versión documento:** v2.0.21+ (2026-07-16)
-**Firmware compatible:** ACEL_HYUN_V3 v2.0.21+
+**Versión documento:** v2.0.24+ (2026-08-17)
+**Firmware compatible:** ACEL_HYUN_V3 v2.0.24+

@@ -2,7 +2,7 @@
 
 Controlador electrónico de acelerador para excavadora Hyundai R250 LC7 con puente H IBT-2 (BTS7960), control PID en lazo cerrado y cumplimiento de normativas de seguridad industrial ISO 13849, ISO 7637-2 e ISO 13766.
 
-**Versión actual: v2.0.21 (2026-07-16)**
+**Versión actual: v2.0.24 (2026-08-17)**
 
 ---
 
@@ -67,12 +67,18 @@ ACEL_HYUN_V3/
 ├── test/
 │   ├── test_pid.cpp          # Tests unitarios PID (Unity)
 │   ├── test_overcurrent.cpp  # Tests unitarios overcurrent (Unity)
+│   ├── test_main.cpp         # Tests unitarios de la maquina de estados (Unity)
 │   ├── test_runner.cpp       # Runner de tests
+│   ├── mock_arduino.h/.cpp   # Mocks de Arduino/EEPROM para el entorno native
 │   └── TEST_PROCEDURE.md     # Procedimiento de prueba en hardware
+├── ai/hardware_target.json   # Fuente de verdad de hardware (pines, memoria, reglas)
+├── .claude/agents/           # Subagentes Claude Code (planner/coder/reviewer/tester/...)
+├── .claude/skills/           # Conocimiento persistente (MISRA/ISO, IBT-2, diagnostico arranque)
+├── CLAUDE.md                 # Instrucciones del proyecto para Claude Code
 ├── platformio.ini            # Build configuration
 ├── gitea-init.sh             # Script de inicialización Gitea
 ├── CHANGELOG.md              # Historial de versiones
-├── AGENTS.md                 # Reglas del equipo de agentes
+├── CALIBRACION_GUIA.md       # Guía paso a paso de calibración (manual y ACAL)
 └── README.md                 # Este archivo
 ```
 
@@ -84,36 +90,38 @@ ACEL_HYUN_V3/
 - ✅ **Boot Security**: Pines de potencia configurados antes de activar enable
 - ✅ **Zero Dynamic RAM**: Sin fragmentación de memoria en runtime
 
-## Novedades v2.0.21 (2026-07-16)
+## Novedades v2.0.24 (2026-08-17)
 
-### Auto-tuning PID robusto para actuadores lentos
+### Fix crítico: reset del micro al arrancar el motor
+Ver `CHANGELOG.md` para el detalle completo. En resumen: el PWM del puente H se había subido por error a 62.5kHz (el IBT-2/BTS7960 admite máximo 25kHz), había un bug de modo en el Timer1 (OCR1A hacía de TOP y de duty al mismo tiempo) y una colisión de direcciones EEPROM entre la config general y la calibración de sobrecorriente. Los tres se corrigieron, más un soft-start no bloqueante y diagnóstico de causa de reset (`MCUSR`) por Serial.
+
+### v2.0.23 — Auto-calibración completa (ACAL)
+Comando `ACAL`: calibra el pedal igual que `CAL` pero busca los topes mecánicos del actuador sola, usando detección de sobrecorriente. Ver `CALIBRACION_GUIA.md` sección 4 para el procedimiento completo.
+
+### v2.0.21 — Auto-tuning PID robusto para actuadores lentos
 - Timeout extendido **30s → 90s** (permite completar 6 ciclos en actuadores lentos)
 - PWM tuning **140 → 180** (más torque para vencer fricción estática)
 - Histeresis relay **±5 → ±3** (conmutación más rápida, oscilación más limpia)
 - Setpoint adaptativo: usa centro real del rango calibrado (mMin+mMax)/2, no 50% fijo
-- Progreso cada 5s: log de posición/error durante tuning para diagnóstico
-- Ciclos mínimos **6 → 4** (más tolerante, validación de amplitud >1.0 mantenida)
-- Timeout INIT_MOVE **5s → 10s** (más tiempo para alcanzar posición media)
-
-### Fixes críticos
-- **Serial timeout 5ms en TODOS los modos** (OPERATION, CALIBRATION, TUNING): procesa comandos sin requerir Enter
-- **Dead-time en primer movimiento**: flag `firstMovementAfterStop` salta el bloqueo 150ms al iniciar desde parado
-- **Overcurrent**: validación nominal=0/saturado, timeout 5s en setup, OCAL verifica motor parado
 
 ## Comandos Serie
 
 | Comando | Descripción |
 |---------|-------------|
-| `CAL` | Iniciar calibración interactiva (6 pasos) |
+| `CAL` | Iniciar calibración manual interactiva (6 pasos) |
+| `ACAL` | Auto-calibración: pedal manual + topes del actuador automáticos por overcurrent |
 | `OK` | Confirmar posición actual en calibración |
-| `FWD` / `REV` / `STOP` | Probar dirección motor (paso 3/6) |
+| `FWD` / `REV` / `STOP` | Probar dirección motor (paso 3/6 de `CAL`) |
 | `DIR FWD ACEL` / `DIR REV ACEL` | Configurar dirección de aceleración |
 | `MOVEFWD` / `MOVEREV` | Mover a tope de aceleración/desaceleración |
 | `SETMAX` / `SETMIN` | Guardar límites de feedback |
 | `SAVE` | Guardar calibración en EEPROM |
 | `TUNE` | Auto-tuning PID por relay (Åström-Hägglund) |
+| `SAVEPID` | Guardar PID de `TUNE` sin validar |
 | `RST` | Resetear fault (overcurrent/stall) |
 | `OCAL` | Recalibrar sensor de corriente (A2) |
+
+Guía completa paso a paso: `CALIBRACION_GUIA.md`.
 
 ## Requisitos de Desarrollo
 
@@ -128,18 +136,18 @@ ACEL_HYUN_V3/
 # Compilar
 pio run -e nanoatmega328
 
-# Tests unitarios (30/30 PASS)
+# Tests unitarios (38/38 PASS)
 pio test -e native
 
 # Subir a Arduino Nano
 pio run -e nanoatmega328 -t upload
 ```
 
-## Métricas v2.0.21
+## Métricas v2.0.24
 
-- **RAM**: 27.3% (560/2048 bytes)
-- **Flash**: 50.1% (15398/30720 bytes)
-- **Tests**: 30/30 PASS (17 PID + 2 dead-time + 11 overcurrent)
+- **RAM**: 29.0% (594/2048 bytes)
+- **Flash**: 59.1% (18160/30720 bytes)
+- **Tests**: 38/38 PASS (17 PID + 2 dead-time + 11 overcurrent + 8 maquina de estados)
 
 ## Horas de Desarrollo
 
